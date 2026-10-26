@@ -170,3 +170,6 @@ apps/backend/.manual-env/
 
 # Disposable release-upgrade rehearsal assets
 /.cache/upgrade/
+
+# Fleet service build output
+apps/fleet/bin/

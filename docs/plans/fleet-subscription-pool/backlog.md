@@ -47,7 +47,7 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 
 | ID | Kind | Item | Status | Notes |
 | --- | --- | --- | --- | --- |
-| F1 | agent | Scaffold `apps/fleet`: go.mod, `cmd/fleetd` with config (env), HTTP server with `/healthz`, SQLite store with migrations (`seats`, `registration_tokens`, `dispatch_claims`, `handoffs`), Makefile target, README. | todo | |
+| F1 | agent | Scaffold `apps/fleet`: go.mod, `cmd/fleetd` with config (env), HTTP server with `/healthz`, SQLite store with migrations (`seats`, `registration_tokens`, `dispatch_claims`, `handoffs`), Makefile target, README. | done | `make test vet build` pass with `-race`; golangci-lint (backend config) 0 issues; smoke run: `/healthz` 200, DB created `0600`, clean SIGTERM shutdown. CI: `.github/workflows/fleet-tests.yml` (push to `feature/fleet`/main, PRs touching `apps/fleet`). |
 | F2 | agent | Kandev client package: REST (create/patch/delete executor + profile, list/get tasks, update task assignee) and WS (`session.launch`, `task.subscribe`) with PAT auth; httptest-based client tests that pin request shapes. | todo | Shapes from `internal/task/handlers/executor_handlers.go`, `executor_profile_handlers.go`, `orchestrator/session_launch.go`. |
 | F3 | agent | Registration: admin CLI `fleetd token create --owner <user> --ttl` (one-time, hashed at rest); `POST /v1/register` consumes it, records seat (owner, ssh host/port/user, host key fingerprint, labels, capacity), creates the Kandev SSH executor + profile, returns a per-seat HMAC secret. Executor never repointed (D3). | todo | |
 | F4 | agent | Heartbeat: `POST /v1/heartbeat` (HMAC + timestamp window), payload = state, quota 5h/weekly %, reset times, free slots, agent version. Seat state machine (registering, online, busy, cooldown_5h, cooldown_week, draining, offline, retired) with an offline sweeper (3 missed beats). | todo | |
@@ -102,3 +102,4 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 - 2026-10-26: C4 done (usage-breakdown endpoint).
 - 2026-10-26: D5 revised (standalone fleet service instead of plugin, see plan).
   Phase 2-3 broken down into F1-F12 and U1.
+- 2026-10-26: F1 done (fleet module scaffold + CI workflow).
