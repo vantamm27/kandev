@@ -123,3 +123,8 @@ func (s *Service) RotateSecret(ctx context.Context, id string) (string, error) {
 	s.log.Info("seat secret rotated", "seat_id", id)
 	return secret, nil
 }
+
+// ListHandoffs returns handoffs in the given states (all when none).
+func (s *Service) ListHandoffs(ctx context.Context, states ...string) ([]store.Handoff, error) {
+	return s.store.ListHandoffs(ctx, states...)
+}

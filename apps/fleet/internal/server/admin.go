@@ -18,6 +18,7 @@ type Admin interface {
 	Undrain(ctx context.Context, id string) error
 	Retire(ctx context.Context, id string, force bool) error
 	RotateSecret(ctx context.Context, id string) (string, error)
+	ListHandoffs(ctx context.Context, states ...string) ([]store.Handoff, error)
 }
 
 func (s *Server) registerAdminRoutes() {
@@ -32,6 +33,21 @@ func (s *Server) registerAdminRoutes() {
 		return s.deps.Admin.Retire(ctx, id, r.URL.Query().Get("force") == "true")
 	})))
 	s.mux.HandleFunc("POST /v1/admin/seats/{id}/rotate-secret", s.adminOnly(s.handleRotateSecret))
+	s.mux.HandleFunc("GET /v1/admin/handoffs", s.adminOnly(s.handleListHandoffs))
+}
+
+func (s *Server) handleListHandoffs(w http.ResponseWriter, r *http.Request) {
+	var states []string
+	if raw := r.URL.Query().Get("state"); raw != "" {
+		states = strings.Split(raw, ",")
+	}
+	handoffs, err := s.deps.Admin.ListHandoffs(r.Context(), states...)
+	if err != nil {
+		s.deps.Log.Error("list handoffs failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "list handoffs failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"handoffs": handoffs})
 }
 
 // adminOnly requires `Authorization: Bearer <FLEET_ADMIN_TOKEN>`. With no

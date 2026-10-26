@@ -51,6 +51,11 @@ type Stats struct {
 	Exhausted int // tasks that used up their attempts
 }
 
+// LimitScanner offers handoffs for tasks blocked by usage limits.
+type LimitScanner interface {
+	Scan(ctx context.Context, now time.Time) (int, error)
+}
+
 // Dispatcher runs dispatch rounds.
 type Dispatcher struct {
 	cfg      Config
@@ -59,6 +64,8 @@ type Dispatcher struct {
 	launcher Launcher
 	log      *slog.Logger
 	now      func() time.Time
+	// Limits, when set, runs after each round's launches.
+	Limits LimitScanner
 
 	mu       sync.Mutex
 	last     Stats
@@ -167,6 +174,11 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 			stats.Launched++
 		} else {
 			stats.Failed++
+		}
+	}
+	if d.Limits != nil {
+		if _, err := d.Limits.Scan(ctx, d.now()); err != nil {
+			d.log.Warn("limit scan failed", "error", err)
 		}
 	}
 	d.mu.Lock()

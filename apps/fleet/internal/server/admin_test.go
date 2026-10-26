@@ -31,6 +31,9 @@ func (f *fakeAdmin) Retire(_ context.Context, id string, force bool) error {
 	return f.err
 }
 func (f *fakeAdmin) RotateSecret(context.Context, string) (string, error) { return "new-secret", f.err }
+func (f *fakeAdmin) ListHandoffs(_ context.Context, states ...string) ([]store.Handoff, error) {
+	return []store.Handoff{{ID: "hoff_1", State: strings.Join(states, "+")}}, f.err
+}
 
 func adminRequest(t *testing.T, a Admin, token, method, path, auth string) *httptest.ResponseRecorder {
 	t.Helper()
@@ -91,5 +94,12 @@ func TestAdminErrorStatuses(t *testing.T) {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.status)
 			}
 		})
+	}
+}
+
+func TestAdminListHandoffs(t *testing.T) {
+	rec := adminRequest(t, &fakeAdmin{}, "tok", http.MethodGet, "/v1/admin/handoffs?state=offered,exhausted", "Bearer tok")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"offered+exhausted"`) {
+		t.Fatalf("list handoffs = %d %s", rec.Code, rec.Body.String())
 	}
 }
