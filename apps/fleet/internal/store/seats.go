@@ -23,7 +23,7 @@ const (
 	SeatRetired      = "retired"
 )
 
-// ErrSeatExists means a seat already uses the same SSH host, port, and user.
+// ErrSeatExists means a live seat already uses the same SSH host, port, and user.
 var ErrSeatExists = errors.New("a seat already uses this ssh host, port, and user")
 
 // ErrSeatNotFound means no seat has the requested ID.
@@ -89,12 +89,12 @@ func (s *Store) RegisterSeat(ctx context.Context, rawToken string, seat Seat, no
 	return nil
 }
 
-// SeatEndpointTaken reports whether any seat row, retired ones included, uses
-// the endpoint, so registration can fail before creating Kandev resources.
+// SeatEndpointTaken reports whether a live (not retired) seat uses the
+// endpoint, so registration can fail before creating Kandev resources.
 func (s *Store) SeatEndpointTaken(ctx context.Context, host string, port int, user string) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM seats
-		WHERE ssh_host = ? AND ssh_port = ? AND ssh_user = ?`, host, port, user).Scan(&n)
+		WHERE ssh_host = ? AND ssh_port = ? AND ssh_user = ? AND state != ?`, host, port, user, SeatRetired).Scan(&n)
 	if err != nil {
 		return false, fmt.Errorf("check seat endpoint: %w", err)
 	}
@@ -118,10 +118,30 @@ func (s *Store) GetSeat(ctx context.Context, id string) (Seat, error) {
 	if err != nil {
 		return Seat{}, fmt.Errorf("read seat: %w", err)
 	}
-	if err := json.Unmarshal([]byte(labels), &seat.Labels); err != nil {
-		return Seat{}, fmt.Errorf("decode seat labels: %w", err)
+	if err := decodeLabels(labels, &seat.Labels); err != nil {
+		return Seat{}, err
 	}
 	return seat, nil
+}
+
+// FreeSlots reads the seat's free slots from its last heartbeat.
+func (s *Store) FreeSlots(ctx context.Context, id string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT free_slots FROM seats WHERE id = ?`, id).Scan(&n)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrSeatNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("read free slots: %w", err)
+	}
+	return n, nil
+}
+
+func decodeLabels(raw string, out *[]string) error {
+	if err := json.Unmarshal([]byte(raw), out); err != nil {
+		return fmt.Errorf("decode seat labels: %w", err)
+	}
+	return nil
 }
 
 func isUniqueViolation(err error) bool {

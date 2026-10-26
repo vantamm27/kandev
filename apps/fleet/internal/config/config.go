@@ -26,6 +26,8 @@ type Config struct {
 	SSHIdentitySource string
 	// SSHIdentityFile is the key path on the Kandev host for source "file".
 	SSHIdentityFile string
+	// AdminToken guards the /v1/admin API; empty disables it.
+	AdminToken string
 }
 
 const (
@@ -54,6 +56,7 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 
 		SSHIdentitySource: get("FLEET_SSH_IDENTITY_SOURCE", ""),
 		SSHIdentityFile:   get("FLEET_SSH_IDENTITY_FILE", ""),
+		AdminToken:        get("FLEET_ADMIN_TOKEN", ""),
 	}
 	switch cfg.SSHIdentitySource {
 	case "", "agent":

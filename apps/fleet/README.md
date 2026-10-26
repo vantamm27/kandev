@@ -43,6 +43,7 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `FLEET_HEARTBEAT_TIMEOUT` | `90s` | A seat without a heartbeat for this long is offline. |
 | `FLEET_SSH_IDENTITY_SOURCE` | empty | How Kandev authenticates to seats: `agent` or `file`. |
 | `FLEET_SSH_IDENTITY_FILE` | empty | Private key path on the Kandev host when the source is `file`. |
+| `FLEET_ADMIN_TOKEN` | empty | Bearer token for `/v1/admin`; empty disables the admin API. |
 
 ## API
 
@@ -51,6 +52,11 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `GET /healthz` | none | `{"status":"ok"}` when the database answers. |
 | `POST /v1/register` | one-time token in the body | Register a seat; creates its Kandev SSH executor and returns the seat's HMAC secret once. |
 | `POST /v1/heartbeat` | HMAC (`X-Fleet-Seat`, `X-Fleet-Timestamp`, `X-Fleet-Signature`) | Report limit, quota, reset times, and free slots; returns the seat state. |
+| `GET /v1/admin/seats` | `Bearer $FLEET_ADMIN_TOKEN` | List seats (no secrets). |
+| `POST /v1/admin/seats/{id}/drain` | admin | Stop new work on a seat; running sessions continue. |
+| `POST /v1/admin/seats/{id}/undrain` | admin | Return a draining seat to service. |
+| `POST /v1/admin/seats/{id}/retire[?force=true]` | admin | Delete the seat's Kandev executor and retire it. Without `force` the seat must be draining with every slot free. The endpoint can then be registered again. |
+| `POST /v1/admin/seats/{id}/rotate-secret` | admin | Issue a new HMAC secret (shown once); put it in the node's config. |
 
 Issue a registration token for a seat owner:
 

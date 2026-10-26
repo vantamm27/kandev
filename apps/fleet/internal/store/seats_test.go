@@ -84,3 +84,32 @@ func TestRegisterSeatDuplicateEndpointKeepsToken(t *testing.T) {
 		t.Fatalf("a failed registration must leave its token usable: %v", err)
 	}
 }
+
+func TestRetiredSeatFreesEndpoint(t *testing.T) {
+	s := openTestStore(t, filepath.Join(t.TempDir(), "fleet.db"))
+	ctx := context.Background()
+	for _, raw := range []string{"raw-1", "raw-2", "raw-3"} {
+		if err := s.CreateToken(ctx, raw, RegistrationToken{OwnerUserID: "user-a", ExpiresAt: testNow.Add(time.Hour)}, testNow); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.RegisterSeat(ctx, "raw-1", newSeat("seat-1", "mini-1", "seat-a"), testNow); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RegisterSeat(ctx, "raw-2", newSeat("seat-2", "mini-1", "seat-a"), testNow); !errors.Is(err, ErrSeatExists) {
+		t.Fatalf("live duplicate = %v", err)
+	}
+	if err := s.SetSeatState(ctx, "seat-1", []string{SeatOnline}, SeatRetired, testNow); err != nil {
+		t.Fatal(err)
+	}
+	if taken, err := s.SeatEndpointTaken(ctx, "mini-1", 22, "seat-a"); err != nil || taken {
+		t.Fatalf("retired endpoint taken = %v, %v", taken, err)
+	}
+	if err := s.RegisterSeat(ctx, "raw-3", newSeat("seat-3", "mini-1", "seat-a"), testNow); err != nil {
+		t.Fatalf("re-register after retire: %v", err)
+	}
+	seats, err := s.ListSeats(ctx)
+	if err != nil || len(seats) != 2 {
+		t.Fatalf("list = %d seats, %v", len(seats), err)
+	}
+}

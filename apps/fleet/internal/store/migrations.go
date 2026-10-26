@@ -1,6 +1,7 @@
 package store
 
 // migrations are applied in order; append only, never edit a released entry.
+// (Entry 1 was revised before fleetd's first deployment.)
 var migrations = []string{
 	`
 	CREATE TABLE seats (
@@ -24,9 +25,10 @@ var migrations = []string{
 		agent_version TEXT NOT NULL DEFAULT '',
 		last_heartbeat_at TIMESTAMP,
 		created_at TIMESTAMP NOT NULL,
-		updated_at TIMESTAMP NOT NULL,
-		UNIQUE (ssh_host, ssh_port, ssh_user)
+		updated_at TIMESTAMP NOT NULL
 	);
+	-- One live seat per endpoint; a retired seat frees its endpoint for re-registration.
+	CREATE UNIQUE INDEX uniq_seats_live_endpoint ON seats(ssh_host, ssh_port, ssh_user) WHERE state != 'retired';
 	CREATE INDEX idx_seats_owner ON seats(owner_user_id);
 	CREATE INDEX idx_seats_state ON seats(state);
 

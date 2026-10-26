@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kandev/kandev/apps/fleet/internal/admin"
 	"github.com/kandev/kandev/apps/fleet/internal/config"
 	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
@@ -116,7 +117,8 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Deps{
-			DB: db, Registrar: registry.New(db, client, identity, log), Seats: db, Log: log,
+			DB: db, Registrar: registry.New(db, client, identity, log), Seats: db,
+			Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken, Log: log,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

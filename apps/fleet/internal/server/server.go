@@ -33,7 +33,10 @@ type Deps struct {
 	DB        Pinger
 	Registrar Registrar
 	Seats     Seats
-	Log       *slog.Logger
+	Admin     Admin
+	// AdminToken guards /v1/admin; empty disables the admin API.
+	AdminToken string
+	Log        *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -55,6 +58,7 @@ func New(deps Deps) *Server {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
 	s.mux.HandleFunc("POST /v1/heartbeat", s.handleHeartbeat)
+	s.registerAdminRoutes()
 	return s
 }
 
