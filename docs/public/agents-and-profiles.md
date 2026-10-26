@@ -864,6 +864,40 @@ Kandev attributes are appended. Keys starting with `kandev.` are owned by
 Kandev and are replaced at launch. SSH executors forward this variable to the
 remote agent.
 
+### Usage by executor and assignee
+
+`GET /api/v1/workspaces/:id/stats/usage-breakdown` returns the token usage Kandev
+recorded for the workspace, summed per UTC day, session executor, task human
+assignee, and model:
+
+```json
+{
+  "usage": [
+    {
+      "day": "2026-10-20",
+      "executor_id": "exec-mini-1",
+      "assignee_user_id": "user-a",
+      "model": "opus",
+      "event_count": 2,
+      "tokens_in": 300,
+      "tokens_cached_read": 50,
+      "tokens_cached_write": 0,
+      "tokens_out": 30,
+      "tokens_total": 380,
+      "cost_subcents": 10
+    }
+  ],
+  "has_more": false
+}
+```
+
+It accepts the same `range` query as the other workspace statistics. Rows are
+newest day first and capped at 5,000; `has_more` reports that rows were cut off,
+so narrow the range. `cost_subcents` is hundredths of a cent and counts only
+usage Kandev could price; for subscription plans it is an API-equivalent value,
+not the amount billed. Quick Chat and automation-run usage is excluded. An empty
+`executor_id` or `assignee_user_id` means the session or task had none.
+
 ## Permissions and unattended work
 
 In a structured ACP session, the agent can present a permission request and its available responses. With **Auto-approve all permissions** disabled, a person chooses a response in the session. With it enabled, the runtime selects the first allow-once or allow-always response without waiting. If the agent supplies no allow response, Kandev selects its first response even when that response is not approval; with no responses, it cancels.

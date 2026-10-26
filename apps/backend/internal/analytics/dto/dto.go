@@ -59,6 +59,23 @@ type ModelUsageDTO struct {
 	TotalDurationMs int64  `json:"total_duration_ms"`
 }
 
+// UsageBreakdownDTO is token usage for one UTC day, executor, human assignee,
+// and model. Cost is in subcents (hundredths of a cent) and covers only
+// priced events.
+type UsageBreakdownDTO struct {
+	Day               string `json:"day"`
+	ExecutorID        string `json:"executor_id"`
+	AssigneeUserID    string `json:"assignee_user_id"`
+	Model             string `json:"model"`
+	EventCount        int64  `json:"event_count"`
+	TokensIn          int64  `json:"tokens_in"`
+	TokensCachedRead  int64  `json:"tokens_cached_read"`
+	TokensCachedWrite int64  `json:"tokens_cached_write"`
+	TokensOut         int64  `json:"tokens_out"`
+	TokensTotal       int64  `json:"tokens_total"`
+	CostSubcents      int64  `json:"cost_subcents"`
+}
+
 // RepositoryStatsDTO represents usage statistics for a repository
 type RepositoryStatsDTO struct {
 	RepositoryID      string `json:"repository_id"`

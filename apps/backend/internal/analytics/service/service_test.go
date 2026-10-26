@@ -47,6 +47,10 @@ func (f *fakeRepository) GetGitStats(context.Context, string, *time.Time) (*mode
 	return nil, nil
 }
 
+func (f *fakeRepository) GetUsageBreakdown(context.Context, string, *time.Time, int) ([]*models.UsageBreakdown, error) {
+	return nil, nil
+}
+
 func (f *fakeRepository) ListSessionCodeStats(
 	_ context.Context, filter models.SessionCodeStatsFilter,
 ) ([]*models.SessionCodeStats, error) {

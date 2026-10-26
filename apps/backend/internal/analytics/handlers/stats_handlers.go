@@ -20,6 +20,10 @@ const allTimeActivityDays = 365
 const taskStatsLimit = 200
 const modelUsageLimit = 5
 
+// usageBreakdownLimit bounds one usage-breakdown response. Rows are per day,
+// executor, assignee, and model, so a month for a few dozen seats fits.
+const usageBreakdownLimit = 5000
+
 // workspaceNotFoundMessage is the single denial body every stats route uses, so
 // an unauthorized workspace is indistinguishable from an absent one.
 const workspaceNotFoundMessage = "workspace not found"
@@ -70,6 +74,13 @@ func (h *StatsHandlers) registerHTTP(router *gin.Engine) {
 	api.GET("/workspaces/:id/stats/model-usage", h.httpGetModelUsage)
 	api.GET("/workspaces/:id/stats/repositories", h.httpGetRepositoryStats)
 	api.GET("/workspaces/:id/stats/git", h.httpGetGitStats)
+	api.GET("/workspaces/:id/stats/usage-breakdown", h.httpGetUsageBreakdown)
+}
+
+// usageBreakdownResponse pairs the usage rows with a paging flag.
+type usageBreakdownResponse struct {
+	Usage   []dto.UsageBreakdownDTO `json:"usage"`
+	HasMore bool                    `json:"has_more"`
 }
 
 // taskStatsResponse pairs the workload list with a paging flag.
@@ -178,6 +189,23 @@ func (h *StatsHandlers) httpGetRepositoryStats(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, repositoryStatsToDTOs(stats))
+}
+
+func (h *StatsHandlers) httpGetUsageBreakdown(c *gin.Context) {
+	workspaceID, start, _, ok := h.parseRequest(c)
+	if !ok {
+		return
+	}
+	rows, err := h.repo.GetUsageBreakdown(c.Request.Context(), workspaceID, start, usageBreakdownLimit+1)
+	if err != nil {
+		h.fail(c, workspaceID, "usage breakdown", err)
+		return
+	}
+	hasMore := len(rows) > usageBreakdownLimit
+	if hasMore {
+		rows = rows[:usageBreakdownLimit]
+	}
+	c.JSON(http.StatusOK, usageBreakdownResponse{Usage: usageBreakdownToDTOs(rows), HasMore: hasMore})
 }
 
 func (h *StatsHandlers) httpGetGitStats(c *gin.Context) {
@@ -328,6 +356,26 @@ func modelUsageToDTOs(items []*models.ModelUsage) []dto.ModelUsageDTO {
 			SessionCount:    mu.SessionCount,
 			TurnCount:       mu.TurnCount,
 			TotalDurationMs: mu.TotalDurationMs,
+		})
+	}
+	return result
+}
+
+func usageBreakdownToDTOs(items []*models.UsageBreakdown) []dto.UsageBreakdownDTO {
+	result := make([]dto.UsageBreakdownDTO, 0, len(items))
+	for _, u := range items {
+		result = append(result, dto.UsageBreakdownDTO{
+			Day:               u.Day,
+			ExecutorID:        u.ExecutorID,
+			AssigneeUserID:    u.AssigneeUserID,
+			Model:             u.Model,
+			EventCount:        u.EventCount,
+			TokensIn:          u.TokensIn,
+			TokensCachedRead:  u.TokensCachedRead,
+			TokensCachedWrite: u.TokensCachedWrite,
+			TokensOut:         u.TokensOut,
+			TokensTotal:       u.TokensTotal,
+			CostSubcents:      u.CostSubcents,
 		})
 	}
 	return result

@@ -88,6 +88,13 @@ func (r *recordingRepo) GetGitStats(_ context.Context, _ string, _ *time.Time) (
 	return &models.GitStats{TotalCommits: 7}, nil
 }
 
+func (r *recordingRepo) GetUsageBreakdown(
+	_ context.Context, _ string, _ *time.Time, _ int,
+) ([]*models.UsageBreakdown, error) {
+	r.calls = append(r.calls, "GetUsageBreakdown")
+	return []*models.UsageBreakdown{{Day: "2026-01-01", Model: "opus", TokensTotal: 10}}, nil
+}
+
 func (r *recordingRepo) ListSessionCodeStats(
 	_ context.Context, _ models.SessionCodeStatsFilter,
 ) ([]*models.SessionCodeStats, error) {

@@ -67,6 +67,23 @@ type ModelUsage struct {
 	TotalDurationMs int64  `json:"total_duration_ms"`
 }
 
+// UsageBreakdown is recorded token usage for one UTC day, executor, human
+// assignee, and model. Empty ExecutorID or AssigneeUserID means the session or
+// task carried none.
+type UsageBreakdown struct {
+	Day               string
+	ExecutorID        string
+	AssigneeUserID    string
+	Model             string
+	EventCount        int64
+	TokensIn          int64
+	TokensCachedRead  int64
+	TokensCachedWrite int64
+	TokensOut         int64
+	TokensTotal       int64
+	CostSubcents      int64
+}
+
 // RepositoryStats represents aggregated statistics for a repository in a workspace
 type RepositoryStats struct {
 	RepositoryID      string `json:"repository_id"`

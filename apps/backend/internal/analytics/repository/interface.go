@@ -31,5 +31,6 @@ type Repository interface {
 	GetModelUsage(ctx context.Context, workspaceID string, limit int, start *time.Time) ([]*models.ModelUsage, error)
 	GetRepositoryStats(ctx context.Context, workspaceID string, start *time.Time) ([]*models.RepositoryStats, error)
 	GetGitStats(ctx context.Context, workspaceID string, start *time.Time) (*models.GitStats, error)
+	GetUsageBreakdown(ctx context.Context, workspaceID string, start *time.Time, limit int) ([]*models.UsageBreakdown, error)
 	ListSessionCodeStats(ctx context.Context, filter models.SessionCodeStatsFilter) ([]*models.SessionCodeStats, error)
 }
