@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
+	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
 // Pinger reports whether a dependency is healthy.
@@ -21,11 +22,20 @@ type Registrar interface {
 	Register(ctx context.Context, req registry.Request) (registry.Result, error)
 }
 
+// Seats reads and updates seats for signed node requests.
+type Seats interface {
+	GetSeat(ctx context.Context, id string) (store.Seat, error)
+	ApplyHeartbeat(ctx context.Context, seatID string, u store.HeartbeatUpdate, now time.Time) error
+}
+
 // Deps are the server's collaborators.
 type Deps struct {
 	DB        Pinger
 	Registrar Registrar
+	Seats     Seats
 	Log       *slog.Logger
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 }
 
 // Server routes fleetd HTTP requests.
@@ -44,7 +54,15 @@ func New(deps Deps) *Server {
 	s := &Server{deps: deps, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
+	s.mux.HandleFunc("POST /v1/heartbeat", s.handleHeartbeat)
 	return s
+}
+
+func (s *Server) now() time.Time {
+	if s.deps.Now != nil {
+		return s.deps.Now()
+	}
+	return time.Now()
 }
 
 // ServeHTTP implements http.Handler.

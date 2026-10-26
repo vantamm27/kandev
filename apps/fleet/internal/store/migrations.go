@@ -65,4 +65,8 @@ var migrations = []string{
 	);
 	CREATE INDEX idx_handoffs_task ON handoffs(task_id, attempt);
 	`,
+	`
+	ALTER TABLE seats ADD COLUMN limit_reason TEXT NOT NULL DEFAULT '';
+	ALTER TABLE seats ADD COLUMN last_signed_at INTEGER NOT NULL DEFAULT 0;
+	`,
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
 	"github.com/kandev/kandev/apps/fleet/internal/server"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
+	"github.com/kandev/kandev/apps/fleet/internal/sweeper"
 )
 
 const (
@@ -115,10 +116,20 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	httpServer := &http.Server{
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Deps{
-			DB: db, Registrar: registry.New(db, client, identity, log), Log: log,
+			DB: db, Registrar: registry.New(db, client, identity, log), Seats: db, Log: log,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		sweeper.New(db, cfg.HeartbeatTimeout, log).Run(ctx)
+	}()
+	defer func() {
+		stop()
+		<-sweepDone
+	}()
+
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("fleetd listening", "addr", cfg.ListenAddr, "db", cfg.DBPath)
