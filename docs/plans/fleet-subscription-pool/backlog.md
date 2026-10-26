@@ -32,8 +32,8 @@ can resume from this file alone.
 
 | ID | Kind | Item | Status | Notes |
 | --- | --- | --- | --- | --- |
-| C1 | core | MCP `create_task_kandev` accepts `priority` and `assignee_user_id` (alias `me` = caller). Service `CreateTaskRequest.AssigneeUserID` validated like an update. | done | Uncommitted on `feature/fleet`. Files: `task/service/service_requests.go`, `service_tasks.go`, `mcp/handlers/{create_task_mode.go,handlers.go,create_task_assignee.go}`, `mcp/server/{server.go,handlers.go}`, tests `*create_task_assignee_test.go`, schema pin in `mcp/server/handlers_test.go`, docs `docs/public/automation-and-mcp.md`. MCP tests and lint pass. |
-| C2 | core | Inject `OTEL_RESOURCE_ATTRIBUTES` per launch (`kandev.workspace_id`, `kandev.task_id`, `kandev.session_id`, `kandev.agent_profile_id`, `kandev.execution_profile_id`, `kandev.executor_type`), appended to any existing value. | done | Uncommitted. `agent/runtime/lifecycle/otel_resource_env.go` (+test), applied in all three branches of `buildEnvForExecution` (`manager_startup.go`), and added to the SSH remote env allowlist (`executor_ssh_operations.go`), because SSH forwards only allowlisted keys. Executor ID and assignee are not on `LaunchRequest`; seat identity comes from Claude Code's own account attributes, task-to-assignee joins via C4. Docs: `docs/public/agents-and-profiles.md`. |
+| C1 | core | MCP `create_task_kandev` accepts `priority` and `assignee_user_id` (alias `me` = caller). Service `CreateTaskRequest.AssigneeUserID` validated like an update. | done | Commit `1770e866` on `feature/fleet`. Files: `task/service/service_requests.go`, `service_tasks.go`, `mcp/handlers/{create_task_mode.go,handlers.go,create_task_assignee.go}`, `mcp/server/{server.go,handlers.go}`, tests `*create_task_assignee_test.go`, schema pin in `mcp/server/handlers_test.go`, docs `docs/public/automation-and-mcp.md`. MCP tests and lint pass. |
+| C2 | core | Inject `OTEL_RESOURCE_ATTRIBUTES` per launch (`kandev.workspace_id`, `kandev.task_id`, `kandev.session_id`, `kandev.agent_profile_id`, `kandev.execution_profile_id`, `kandev.executor_type`), appended to any existing value. | done | Commit `170e3b17`. `agent/runtime/lifecycle/otel_resource_env.go` (+test), applied in all three branches of `buildEnvForExecution` (`manager_startup.go`), and added to the SSH remote env allowlist (`executor_ssh_operations.go`), because SSH forwards only allowlisted keys. Executor ID and assignee are not on `LaunchRequest`; seat identity comes from Claude Code's own account attributes, task-to-assignee joins via C4. Docs: `docs/public/agents-and-profiles.md`. |
 | C4 | core | Export token usage grouped by executor, assignee, model, day (API or `/metrics`). | todo | Source: `task_usage_events`; `ModelUsage` lacks tokens. |
 | C6 | core | Fix `docs/WEBSOCKET_API.md:1626` (`orchestrator.start` -> `session.launch`). | todo | Docs only. |
 | P1-01 | infra | Managed settings for OTel on laptops and nodes (`source`, `team`, `seat`); prompt logging off. | todo | |
@@ -88,5 +88,5 @@ can resume from this file alone.
   `TestBuildAuthMethodsIdentityAgentOverridesEnvironment`) and a flaky
   `TestSSHPassthroughResetReplacesChangedWorkspaceMCP` (fails about 1 in 10 on
   unmodified `main`); none are caused by C2.
-- Next: commit C1 and C2 as two commits (`feat(mcp): ...`, `feat(lifecycle): ...`),
-  then C6 (docs fix) and Phase 0 spikes.
+- 2026-10-26: Pushed `feature/fleet` to github.com/vantamm27/kandev (commits
+  9f642e47, 1770e866, 170e3b17). Next: C6 (docs fix), then Phase 0 spikes.
