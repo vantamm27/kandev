@@ -14,22 +14,28 @@ type SlotCounter interface {
 	Running(ctx context.Context) (int, error)
 }
 
-// ProcessSlotCounter counts this user's agentctl processes: Kandev's SSH
-// executor starts one agentctl per session on the node.
+// DefaultAgentctlPattern matches the command line of the agentctl that Kandev's
+// SSH executor installs at ~/.kandev/bin/agentctl, and not other agentctl
+// binaries the seat user may run, such as a local Kandev install.
+const DefaultAgentctlPattern = `^[^ ]*/\.kandev/bin/agentctl( |$)`
+
+// ProcessSlotCounter counts this user's SSH-executor agentctl processes:
+// Kandev starts one per session on the node.
 type ProcessSlotCounter struct {
 	// UID is the seat user's numeric ID.
 	UID int
-	// Name is the process name to count; empty means "agentctl".
-	Name string
+	// Pattern is an extended regular expression over the full command line;
+	// empty means DefaultAgentctlPattern.
+	Pattern string
 }
 
 // Running implements SlotCounter with pgrep.
 func (c ProcessSlotCounter) Running(ctx context.Context) (int, error) {
-	name := c.Name
-	if name == "" {
-		name = "agentctl"
+	pattern := c.Pattern
+	if pattern == "" {
+		pattern = DefaultAgentctlPattern
 	}
-	out, err := exec.CommandContext(ctx, "pgrep", "-U", strconv.Itoa(c.UID), "-x", name).Output()
+	out, err := exec.CommandContext(ctx, "pgrep", "-U", strconv.Itoa(c.UID), "-f", pattern).Output()
 	var exitErr *exec.ExitError
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return 0, nil // pgrep exits 1 when nothing matches
