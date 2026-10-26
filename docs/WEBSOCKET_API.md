@@ -75,10 +75,10 @@ flowchart LR
 3. **Create Column** → `column.create`
 4. **Create Task** → `task.create`
 5. **Subscribe to Task** → `task.subscribe` (receive real-time updates)
-6. **Start Execution** → `orchestrator.start` (launches agent)
+6. **Start Execution** → `session.launch` with `intent: "start"` (launches agent)
 7. **Receive ACP Notifications** ← `acp.progress`, `acp.log`, etc.
-8. **Send Follow-up Prompts** → `orchestrator.prompt` (multi-turn)
-9. **Complete Task** → `orchestrator.complete`
+8. **Send Follow-up Prompts** → `message.add` (multi-turn)
+9. **Complete Task** → `task.state` or `task.move`
 10. **Unsubscribe** → `task.unsubscribe`
 
 ---
@@ -1097,7 +1097,7 @@ Subscriptions enable real-time streaming of agent output (ACP) to specific clien
 
 **Purpose:** Subscribe to receive real-time notifications for a specific task.
 
-**Flow Position:** Call before `orchestrator.start` to receive agent output.
+**Flow Position:** Call before `session.launch` to receive agent output.
 
 **Request:**
 ```json
@@ -1330,7 +1330,7 @@ Agents are Docker containers running AI coding assistants.
 
 **Purpose:** Launch an agent container directly (low-level).
 
-**Flow Position:** Typically use `orchestrator.start` instead, which handles this automatically.
+**Flow Position:** Typically use `session.launch` instead, which handles this automatically.
 
 **Request:**
 ```json
@@ -1589,43 +1589,10 @@ The orchestrator coordinates task execution, managing the workflow between tasks
 }
 ```
 
-### `orchestrator.trigger`
+### `session.launch`
 
-**Purpose:** Trigger a task for execution (adds to queue).
-
-**Request:**
-```json
-{
-  "id": "uuid",
-  "type": "request",
-  "action": "orchestrator.trigger",
-  "payload": {
-    "task_id": "task-uuid"
-  }
-}
-```
-
-| Payload Field | Type | Required | Description |
-|--------------|------|----------|-------------|
-| `task_id` | string | ✅ | Task ID to trigger |
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "type": "response",
-  "action": "orchestrator.trigger",
-  "payload": {
-    "success": true,
-    "message": "Task triggered",
-    "task_id": "task-uuid"
-  }
-}
-```
-
-### `orchestrator.start`
-
-**Purpose:** Start executing a task immediately with an agent.
+**Purpose:** Create or resume a session for a task and, depending on the
+intent, start its agent.
 
 **Flow Position:** Main action to begin agent work on a task.
 
@@ -1634,40 +1601,53 @@ The orchestrator coordinates task execution, managing the workflow between tasks
 {
   "id": "uuid",
   "type": "request",
-  "action": "orchestrator.start",
+  "action": "session.launch",
   "payload": {
     "task_id": "task-uuid",
-    "agent_type": "auggie",
-    "priority": 1
+    "intent": "start",
+    "agent_profile_id": "profile-uuid",
+    "executor_profile_id": "executor-profile-uuid",
+    "prompt": "Implement the change described in the task",
+    "priority": "high"
   }
 }
 ```
 
 | Payload Field | Type | Required | Description |
 |--------------|------|----------|-------------|
-| `task_id` | string | ✅ | Task ID to start |
-| `agent_type` | string | ❌ | Override default agent type |
-| `priority` | int | ❌ | Execution priority |
+| `task_id` | string | ✅ | Task to launch |
+| `intent` | string | ❌ | `prepare` (session and optional workspace, no agent), `start` (new session and agent), `start_created` (start the agent on an existing created session), `resume` (restart a stopped session), `workflow_step` (start with a workflow step's prompt), or `restore_workspace` (restore workspace access for a terminal session) |
+| `session_id` | string | ❌ | Existing session, for `start_created`, `resume`, and `restore_workspace` |
+| `agent_profile_id` | string | ❌ | Agent profile; defaults from the task, workflow, or workspace |
+| `executor_id` | string | ❌ | Executor to run on |
+| `executor_profile_id` | string | ❌ | Executor profile to run on |
+| `prompt` | string | ❌ | Initial prompt |
+| `plan_mode` | bool | ❌ | Start in plan mode |
+| `workflow_step_id` | string | ❌ | Workflow step for `workflow_step` |
+| `priority` | string | ❌ | Launch priority |
+| `launch_workspace` | bool | ❌ | With `prepare`, also materialize the workspace |
+| `auto_start` | bool | ❌ | Treat the launch as automatic; a workflow step without auto-start downgrades it to `prepare` |
+| `mcp_server_ids` | string[] | ❌ | Extra MCP servers for the session |
 
 **Response:**
 ```json
 {
   "id": "uuid",
   "type": "response",
-  "action": "orchestrator.start",
+  "action": "session.launch",
   "payload": {
     "success": true,
     "task_id": "task-uuid",
-    "agent_instance_id": "agent-uuid",
-    "status": "running"
+    "session_id": "session-uuid",
+    "agent_execution_id": "execution-uuid",
+    "agent_profile_id": "profile-uuid",
+    "state": "STARTING"
   }
 }
 ```
 
-**Effect:**
-1. Task state changes to `IN_PROGRESS`
-2. Agent container is launched
-3. ACP notifications begin streaming (if subscribed)
+A launch deferred by a concurrency ceiling or WIP limit still returns
+`success: true`; the session starts when capacity frees up.
 
 ### `orchestrator.stop`
 
@@ -1705,78 +1685,13 @@ The orchestrator coordinates task execution, managing the workflow between tasks
 }
 ```
 
-### `orchestrator.prompt`
+### Retired orchestrator actions
 
-**Purpose:** Send a follow-up prompt to a running agent (multi-turn conversation).
-
-**Flow Position:** Use during agent execution for clarifications or additional instructions.
-
-**Request:**
-```json
-{
-  "id": "uuid",
-  "type": "request",
-  "action": "orchestrator.prompt",
-  "payload": {
-    "task_id": "task-uuid",
-    "prompt": "Also add unit tests for the new function"
-  }
-}
-```
-
-| Payload Field | Type | Required | Description |
-|--------------|------|----------|-------------|
-| `task_id` | string | ✅ | Task ID (must have running agent) |
-| `prompt` | string | ✅ | Follow-up prompt text |
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "type": "response",
-  "action": "orchestrator.prompt",
-  "payload": {
-    "success": true
-  }
-}
-```
-
-**Effect:** The prompt is sent to the agent via `agentctl` HTTP sidecar.
-
-### `orchestrator.complete`
-
-**Purpose:** Mark a task as completed.
-
-**Flow Position:** Called when agent finishes successfully or user approves the work.
-
-**Request:**
-```json
-{
-  "id": "uuid",
-  "type": "request",
-  "action": "orchestrator.complete",
-  "payload": {
-    "task_id": "task-uuid"
-  }
-}
-```
-
-| Payload Field | Type | Required | Description |
-|--------------|------|----------|-------------|
-| `task_id` | string | ✅ | Task ID to complete |
-
-**Response:**
-```json
-{
-  "id": "uuid",
-  "type": "response",
-  "action": "orchestrator.complete",
-  "payload": {
-    "success": true,
-    "message": "task completed"
-  }
-}
-```
+`orchestrator.trigger`, `orchestrator.start`, `orchestrator.prompt`, and
+`orchestrator.complete` are no longer registered. Use `session.launch` to start
+work, `message.add` (with `task_id`, `session_id`, and `content`) to send a
+follow-up prompt, and `task.state` (with `id` and `state`) or `task.move` to
+finish a task.
 
 ---
 
@@ -2415,18 +2330,19 @@ async function runTask() {
   await request('task.subscribe', { task_id: task.payload.id });
 
   // 5. Start execution
-  await request('orchestrator.start', { task_id: task.payload.id });
+  const launch = await request('session.launch', { task_id: task.payload.id, intent: 'start' });
 
   // 6. ACP notifications will now stream automatically...
 
   // 7. Send follow-up prompt (optional)
-  await request('orchestrator.prompt', {
+  await request('message.add', {
     task_id: task.payload.id,
-    prompt: 'Also add JWT token validation'
+    session_id: launch.payload.session_id,
+    content: 'Also add JWT token validation'
   });
 
   // 8. When done, complete the task
-  await request('orchestrator.complete', { task_id: task.payload.id });
+  await request('task.state', { id: task.payload.id, state: 'COMPLETED' });
 
   // 9. Unsubscribe
   await request('task.unsubscribe', { task_id: task.payload.id });
@@ -2494,11 +2410,10 @@ async function runTask() {
 | **Orchestrator** | |
 | `orchestrator.status` | Get orchestrator status |
 | `orchestrator.queue` | Get task queue |
-| `orchestrator.trigger` | Queue task for execution |
-| `orchestrator.start` | Start task execution |
 | `orchestrator.stop` | Stop task execution |
-| `orchestrator.prompt` | Send follow-up prompt |
-| `orchestrator.complete` | Complete task |
+| `session.launch` | Start, resume, or prepare a task session |
+| `message.add` | Send follow-up prompt |
+| `task.state` | Set task state (for example `COMPLETED`) |
 | **Permission** | |
 | `permission.respond` | Respond to permission request |
 
