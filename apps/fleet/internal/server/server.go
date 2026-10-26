@@ -36,7 +36,11 @@ type Deps struct {
 	Admin     Admin
 	// AdminToken guards /v1/admin; empty disables the admin API.
 	AdminToken string
-	Log        *slog.Logger
+	// Metrics lists seats for /metrics; nil disables the endpoint.
+	Metrics SeatLister
+	// MetricsToken, when set, is required as a bearer token on /metrics.
+	MetricsToken string
+	Log          *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }
@@ -59,6 +63,7 @@ func New(deps Deps) *Server {
 	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
 	s.mux.HandleFunc("POST /v1/heartbeat", s.handleHeartbeat)
 	s.registerAdminRoutes()
+	s.mux.HandleFunc("GET /metrics", s.handleMetrics)
 	return s
 }
 

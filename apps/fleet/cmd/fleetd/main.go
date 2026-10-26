@@ -118,7 +118,8 @@ func serve(cfg config.Config, log *slog.Logger) error {
 		Addr: cfg.ListenAddr,
 		Handler: server.New(server.Deps{
 			DB: db, Registrar: registry.New(db, client, identity, log), Seats: db,
-			Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken, Log: log,
+			Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken,
+			Metrics: db, MetricsToken: cfg.MetricsToken, Log: log,
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

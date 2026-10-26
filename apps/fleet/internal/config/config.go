@@ -28,6 +28,8 @@ type Config struct {
 	SSHIdentityFile string
 	// AdminToken guards the /v1/admin API; empty disables it.
 	AdminToken string
+	// MetricsToken, when set, is required to scrape /metrics.
+	MetricsToken string
 }
 
 const (
@@ -57,6 +59,7 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		SSHIdentitySource: get("FLEET_SSH_IDENTITY_SOURCE", ""),
 		SSHIdentityFile:   get("FLEET_SSH_IDENTITY_FILE", ""),
 		AdminToken:        get("FLEET_ADMIN_TOKEN", ""),
+		MetricsToken:      get("FLEET_METRICS_TOKEN", ""),
 	}
 	switch cfg.SSHIdentitySource {
 	case "", "agent":

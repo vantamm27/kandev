@@ -44,6 +44,7 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `FLEET_SSH_IDENTITY_SOURCE` | empty | How Kandev authenticates to seats: `agent` or `file`. |
 | `FLEET_SSH_IDENTITY_FILE` | empty | Private key path on the Kandev host when the source is `file`. |
 | `FLEET_ADMIN_TOKEN` | empty | Bearer token for `/v1/admin`; empty disables the admin API. |
+| `FLEET_METRICS_TOKEN` | empty | Bearer token required on `/metrics`; empty leaves it open (keep fleetd inside the VPN). |
 
 ## API
 
@@ -57,6 +58,7 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `POST /v1/admin/seats/{id}/undrain` | admin | Return a draining seat to service. |
 | `POST /v1/admin/seats/{id}/retire[?force=true]` | admin | Delete the seat's Kandev executor and retire it. Without `force` the seat must be draining with every slot free. The endpoint can then be registered again. |
 | `POST /v1/admin/seats/{id}/rotate-secret` | admin | Issue a new HMAC secret (shown once); put it in the node's config. |
+| `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`). |
 
 Issue a registration token for a seat owner:
 
