@@ -25,6 +25,7 @@ type Tasks interface {
 // Launcher starts Kandev sessions.
 type Launcher interface {
 	LaunchSession(ctx context.Context, in kandev.LaunchSessionInput) (kandev.LaunchSessionResult, error)
+	SetPrimarySession(ctx context.Context, sessionID string) error
 }
 
 // Config selects the tasks fleetd dispatches.
@@ -161,6 +162,13 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	candidates, exhausted := d.candidates(queued, claims, now)
 	plan := schedule.Schedule(candidates, seats, now, d.cfg.Policy)
 	stats := Stats{At: now, Queued: map[string]int{}, Waiting: map[string]map[string]int{}, Exhausted: exhausted}
+	// A queued task with a session is a retry over fleetd's failed session.
+	retries := make(map[string]bool)
+	for _, t := range queued {
+		if t.PrimarySessionID != nil {
+			retries[t.ID] = true
+		}
+	}
 	priorities := make(map[string]string, len(candidates))
 	for _, t := range candidates {
 		priorities[t.ID] = t.Priority
@@ -174,7 +182,7 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 		stats.Waiting[p][w.Reason]++
 	}
 	for _, a := range plan.Assignments {
-		if d.launch(ctx, a, profiles[a.SeatID], priorities[a.TaskID]) {
+		if d.launch(ctx, a, profiles[a.SeatID], priorities[a.TaskID], retries[a.TaskID]) {
 			stats.Launched++
 		} else {
 			stats.Failed++
@@ -301,7 +309,9 @@ func (d *Dispatcher) backoff(attempt int) time.Duration {
 }
 
 // launch claims and starts one assignment; it reports whether it launched.
-func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileID, priority string) bool {
+// replacePrimary moves the task's primary session from fleetd's failed
+// attempt to the new one, which Kandev does not do on its own.
+func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileID, priority string, replacePrimary bool) bool {
 	now := d.now()
 	attempt, err := d.store.BeginClaim(ctx, a.TaskID, a.SeatID, now)
 	if errors.Is(err, store.ErrAlreadyClaimed) {
@@ -330,5 +340,10 @@ func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileI
 	}
 	d.log.Info("task launched", "task_id", a.TaskID, "seat_id", a.SeatID, "session_id", res.SessionID,
 		"priority", priority, "score", a.Score, "attempt", attempt)
+	if replacePrimary && res.SessionID != "" {
+		if err := d.launcher.SetPrimarySession(ctx, res.SessionID); err != nil {
+			d.log.Warn("could not make the retried session primary", "task_id", a.TaskID, "session_id", res.SessionID, "error", err)
+		}
+	}
 	return true
 }

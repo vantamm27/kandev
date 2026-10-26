@@ -36,6 +36,11 @@ func (l *Launcher) AddMessage(ctx context.Context, taskID, sessionID, content st
 	return l.with(ctx, func(conn *Conn) error { return conn.AddMessage(ctx, taskID, sessionID, content) })
 }
 
+// SetPrimarySession sends session.set_primary on the shared connection.
+func (l *Launcher) SetPrimarySession(ctx context.Context, sessionID string) error {
+	return l.with(ctx, func(conn *Conn) error { return conn.SetPrimarySession(ctx, sessionID) })
+}
+
 func (l *Launcher) with(ctx context.Context, call func(*Conn) error) error {
 	conn, err := l.connection(ctx)
 	if err != nil {

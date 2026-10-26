@@ -198,20 +198,48 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 
 type workspaceReader interface {
 	GetWorkspace(ctx context.Context, id string) (kandev.Workspace, error)
+	GetAgentProfile(ctx context.Context, id string) (kandev.AgentProfile, error)
+}
+
+// apiBillingEnvKeys route Claude Code to API billing or to a gateway instead
+// of the seat's subscription login.
+var apiBillingEnvKeys = map[string]bool{
+	"ANTHROPIC_API_KEY": true, "ANTHROPIC_AUTH_TOKEN": true, "ANTHROPIC_BASE_URL": true,
 }
 
 // resolveAgentProfile picks the agent profile dispatched sessions run:
-// FLEET_AGENT_PROFILE_ID, else the workspace's default agent profile.
-func resolveAgentProfile(ctx context.Context, cfg config.Config, workspaces workspaceReader) (string, error) {
-	if cfg.AgentProfileID != "" {
-		return cfg.AgentProfileID, nil
+// FLEET_AGENT_PROFILE_ID, else the workspace's default agent profile. Seats
+// are subscription logins, so a profile that bills an API key is refused.
+func resolveAgentProfile(ctx context.Context, cfg config.Config, kandevAPI workspaceReader) (string, error) {
+	id := cfg.AgentProfileID
+	if id == "" {
+		ws, err := kandevAPI.GetWorkspace(ctx, cfg.WorkspaceID)
+		if err != nil {
+			return "", fmt.Errorf("read workspace %s: %w", cfg.WorkspaceID, err)
+		}
+		if ws.DefaultAgentProfileID == "" {
+			return "", fmt.Errorf("workspace %s has no default agent profile; set one or FLEET_AGENT_PROFILE_ID", cfg.WorkspaceID)
+		}
+		id = ws.DefaultAgentProfileID
 	}
-	ws, err := workspaces.GetWorkspace(ctx, cfg.WorkspaceID)
+	profile, err := kandevAPI.GetAgentProfile(ctx, id)
 	if err != nil {
-		return "", fmt.Errorf("read workspace %s: %w", cfg.WorkspaceID, err)
+		return "", fmt.Errorf("read agent profile %s: %w", id, err)
 	}
-	if ws.DefaultAgentProfileID == "" {
-		return "", fmt.Errorf("workspace %s has no default agent profile; set one or FLEET_AGENT_PROFILE_ID", cfg.WorkspaceID)
+	if reason := apiBilling(profile); reason != "" {
+		return "", fmt.Errorf("agent profile %s (%s) %s; seats run on subscription logins, so use a profile without it", id, profile.Name, reason)
 	}
-	return ws.DefaultAgentProfileID, nil
+	return id, nil
+}
+
+func apiBilling(p kandev.AgentProfile) string {
+	for _, e := range p.EnvVars {
+		if apiBillingEnvKeys[e.Key] {
+			return "sets " + e.Key
+		}
+	}
+	if p.ProviderBaseURL != "" || p.ProviderAPIKeySecretID != "" {
+		return "routes through a provider API"
+	}
+	return ""
 }

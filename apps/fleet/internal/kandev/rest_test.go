@@ -156,3 +156,20 @@ func TestGetWorkspaceReadsTheDefaultAgentProfile(t *testing.T) {
 		t.Fatalf("request = %s %s", rec.Method, rec.Path)
 	}
 }
+
+func TestGetAgentProfileFindsItAcrossAgents(t *testing.T) {
+	body := `{"agents":[{"name":"codex-acp","profiles":[{"id":"p-codex","name":"Codex"}]},` +
+		`{"name":"claude-acp","profiles":[{"id":"p-1","name":"team","env_vars":[{"key":"ANTHROPIC_API_KEY","secret_id":"s"}],"provider_base_url":"https://gw"}]}]}`
+	client, rec := restServer(t, http.StatusOK, body)
+	p, err := client.GetAgentProfile(context.Background(), "p-1")
+	if err != nil || p.ID != "p-1" || p.AgentName != "claude-acp" || len(p.EnvVars) != 1 || p.EnvVars[0].Key != "ANTHROPIC_API_KEY" || p.ProviderBaseURL != "https://gw" {
+		t.Fatalf("GetAgentProfile = %+v, %v", p, err)
+	}
+	if rec.Path != "/api/v1/agents" {
+		t.Fatalf("path = %s", rec.Path)
+	}
+	client, _ = restServer(t, http.StatusOK, body)
+	if _, err := client.GetAgentProfile(context.Background(), "missing"); !IsNotFound(err) {
+		t.Fatalf("missing profile err = %v; want not found", err)
+	}
+}

@@ -60,8 +60,15 @@ func TestCommandErrors(t *testing.T) {
 }
 
 type fakeWorkspaces struct {
-	ws  kandev.Workspace
-	err error
+	ws      kandev.Workspace
+	err     error
+	profile kandev.AgentProfile
+}
+
+func (f fakeWorkspaces) GetAgentProfile(_ context.Context, id string) (kandev.AgentProfile, error) {
+	p := f.profile
+	p.ID = id
+	return p, nil
 }
 
 func (f fakeWorkspaces) GetWorkspace(context.Context, string) (kandev.Workspace, error) {
@@ -84,5 +91,25 @@ func TestResolveAgentProfile(t *testing.T) {
 	}
 	if _, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{err: errors.New("boom")}); err == nil {
 		t.Fatal("a failed lookup must be an error")
+	}
+}
+
+func TestResolveAgentProfileRejectsAPIBilledProfiles(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{WorkspaceID: "ws-1", AgentProfileID: "p-1"}
+	for name, p := range map[string]kandev.AgentProfile{
+		"api key env":     {EnvVars: []kandev.ProfileEnvVar{{Key: "ANTHROPIC_API_KEY"}}},
+		"auth token env":  {EnvVars: []kandev.ProfileEnvVar{{Key: "ANTHROPIC_AUTH_TOKEN"}}},
+		"base url env":    {EnvVars: []kandev.ProfileEnvVar{{Key: "ANTHROPIC_BASE_URL"}}},
+		"provider url":    {ProviderBaseURL: "https://gateway"},
+		"provider secret": {ProviderAPIKeySecretID: "secret-1"},
+	} {
+		if _, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{profile: p}); err == nil {
+			t.Errorf("%s: a profile billed to an API key must be refused", name)
+		}
+	}
+	ok := kandev.AgentProfile{EnvVars: []kandev.ProfileEnvVar{{Key: "CLAUDE_CODE_MAX_OUTPUT_TOKENS"}}}
+	if got, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{profile: ok}); err != nil || got != "p-1" {
+		t.Fatalf("subscription profile = %q, %v", got, err)
 	}
 }

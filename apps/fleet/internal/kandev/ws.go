@@ -169,6 +169,12 @@ func (c *Conn) LaunchSession(ctx context.Context, in LaunchSessionInput) (Launch
 	return out, err
 }
 
+// SetPrimarySession sends session.set_primary, making the session the one the
+// task's UI and workflow follow.
+func (c *Conn) SetPrimarySession(ctx context.Context, sessionID string) error {
+	return c.Request(ctx, "session.set_primary", map[string]string{"session_id": sessionID}, nil)
+}
+
 // AddMessage sends message.add: a user message to a task session. Kandev
 // queues it when the agent is mid-turn.
 func (c *Conn) AddMessage(ctx context.Context, taskID, sessionID, content string) error {

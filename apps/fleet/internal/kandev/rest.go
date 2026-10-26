@@ -79,6 +79,28 @@ func (c *Client) GetWorkspace(ctx context.Context, id string) (Workspace, error)
 	return out, err
 }
 
+// GetAgentProfile finds an agent profile by ID in Kandev's agent list.
+func (c *Client) GetAgentProfile(ctx context.Context, id string) (AgentProfile, error) {
+	var out struct {
+		Agents []struct {
+			Name     string         `json:"name"`
+			Profiles []AgentProfile `json:"profiles"`
+		} `json:"agents"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/api/v1/agents", nil, &out); err != nil {
+		return AgentProfile{}, err
+	}
+	for _, a := range out.Agents {
+		for _, p := range a.Profiles {
+			if p.ID == id {
+				p.AgentName = a.Name
+				return p, nil
+			}
+		}
+	}
+	return AgentProfile{}, &APIError{Status: http.StatusNotFound, Message: "agent profile " + id + " not found"}
+}
+
 // GetTask reads one task.
 func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {
 	var out Task

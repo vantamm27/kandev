@@ -33,6 +33,20 @@ func TestRetriesOwnLaunchThatLeftAFailedSession(t *testing.T) {
 	if len(launcher.calls) != 2 {
 		t.Fatalf("calls = %d; fleetd's failed launch must be retried", len(launcher.calls))
 	}
+	if len(launcher.primary) != 1 || launcher.primary[0] != "sess-t-1" {
+		t.Fatalf("primary = %v; the retried session must replace the failed primary", launcher.primary)
+	}
+}
+
+func TestFirstLaunchLeavesPrimaryToKandev(t *testing.T) {
+	_, tasks, launcher, d, _ := newFixture(t, seatFor("a1", "user-a", 1))
+	tasks.tasks = []kandev.Task{intake("t-1", "user-a", "high")}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.calls) != 1 || len(launcher.primary) != 0 {
+		t.Fatalf("calls = %d, primary = %v", len(launcher.calls), launcher.primary)
+	}
 }
 
 func TestLeavesSessionsFleetdDidNotStart(t *testing.T) {

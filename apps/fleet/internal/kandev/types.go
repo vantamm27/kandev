@@ -75,6 +75,22 @@ type Workspace struct {
 	DefaultAgentProfileID string `json:"default_agent_profile_id,omitempty"`
 }
 
+// ProfileEnvVar is one environment variable of an agent profile; fleetd
+// reads only the key.
+type ProfileEnvVar struct {
+	Key string `json:"key"`
+}
+
+// AgentProfile is the subset of a Kandev agent profile fleetd checks.
+type AgentProfile struct {
+	ID                     string          `json:"id"`
+	Name                   string          `json:"name"`
+	AgentName              string          `json:"-"`
+	EnvVars                []ProfileEnvVar `json:"env_vars,omitempty"`
+	ProviderBaseURL        string          `json:"provider_base_url,omitempty"`
+	ProviderAPIKeySecretID string          `json:"provider_api_key_secret_id,omitempty"`
+}
+
 // Task is the subset of Kandev's TaskDTO fleetd uses.
 type Task struct {
 	ID                  string    `json:"id"`

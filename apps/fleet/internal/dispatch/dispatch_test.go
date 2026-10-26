@@ -34,9 +34,17 @@ func (f *fakeTasks) ListWorkspaceTasks(_ context.Context, ws string, opts kandev
 }
 
 type fakeLauncher struct {
-	mu    sync.Mutex
-	calls []kandev.LaunchSessionInput
-	err   error
+	mu      sync.Mutex
+	calls   []kandev.LaunchSessionInput
+	err     error
+	primary []string
+}
+
+func (f *fakeLauncher) SetPrimarySession(_ context.Context, sessionID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.primary = append(f.primary, sessionID)
+	return nil
 }
 
 func (f *fakeLauncher) LaunchSession(_ context.Context, in kandev.LaunchSessionInput) (kandev.LaunchSessionResult, error) {
