@@ -848,6 +848,22 @@ Repositories can bind an environment key to a Global secret or to a Workspace se
 
 Literal values remain in profile configuration. A secret reference avoids copying a token there, but the selected agent and its child processes still receive the plaintext at runtime. Use narrowly scoped credentials, and keep read-only review profiles separate from profiles allowed to publish, merge, deploy, or administer external systems.
 
+### Telemetry resource attributes
+
+Every agent launch receives `OTEL_RESOURCE_ATTRIBUTES` carrying Kandev identity:
+`kandev.workspace_id`, `kandev.task_id`, `kandev.session_id`,
+`kandev.agent_profile_id`, `kandev.execution_profile_id`, and
+`kandev.executor_type`. Agents that export OpenTelemetry, such as Claude Code
+with telemetry enabled, attach these attributes to their metrics and events, so
+usage can be grouped by task or session in your own collector. Kandev does not
+enable telemetry or choose an exporter; configure those in the agent's own
+settings.
+
+Attributes you set in a profile's `OTEL_RESOURCE_ATTRIBUTES` are kept and the
+Kandev attributes are appended. Keys starting with `kandev.` are owned by
+Kandev and are replaced at launch. SSH executors forward this variable to the
+remote agent.
+
 ## Permissions and unattended work
 
 In a structured ACP session, the agent can present a permission request and its available responses. With **Auto-approve all permissions** disabled, a person chooses a response in the session. With it enabled, the runtime selects the first allow-once or allow-always response without waiting. If the agent supplies no allow response, Kandev selects its first response even when that response is not approval; with no responses, it cancels.

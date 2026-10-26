@@ -517,6 +517,7 @@ func (m *Manager) finalizeBootMessage(execution *AgentExecution, msg *models.Mes
 func (m *Manager) buildEnvForExecution(ctx context.Context, executionID string, req *LaunchRequest, agentConfig agents.Agent, profileInfo *AgentProfileInfo) (map[string]string, error) {
 	if req.EnvironmentFinalized {
 		env := cloneStringMap(req.Env)
+		applyKandevOTelResourceAttributes(env, req)
 		if err := spillLargeWakePayloadEnv(env, req.WorkspacePath, m.logger.Zap()); err != nil {
 			return nil, err
 		}
@@ -527,6 +528,7 @@ func (m *Manager) buildEnvForExecution(ctx context.Context, executionID string, 
 		if err != nil {
 			return nil, err
 		}
+		applyKandevOTelResourceAttributes(env, req)
 		if err := spillLargeWakePayloadEnv(env, req.WorkspacePath, m.logger.Zap()); err != nil {
 			return nil, err
 		}
@@ -560,6 +562,7 @@ func (m *Manager) buildEnvForExecution(ctx context.Context, executionID string, 
 	env["KANDEV_SESSION_ID"] = req.SessionID
 	env["KANDEV_AGENT_PROFILE_ID"] = req.AgentProfileID
 	env["KANDEV_EXECUTION_PROFILE_ID"] = executionProfileID(req)
+	applyKandevOTelResourceAttributes(env, req)
 
 	// Add agent runtime default env vars (e.g., MCP_TIMEOUT for Claude Code)
 	if agentConfig != nil {

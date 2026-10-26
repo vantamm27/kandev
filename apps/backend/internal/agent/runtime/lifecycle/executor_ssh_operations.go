@@ -1038,6 +1038,7 @@ var sshRemoteAgentRuntimeEnvKeys = []string{
 	envKeyKandevWakeReason,
 	envKeyKandevWakeCommentID,
 	envKeyKandevWakePayload,
+	envKeyOTelResourceAttributes,
 }
 
 // sshRemoteAgentEnv builds the env map sent to the remote agent instance. Each
