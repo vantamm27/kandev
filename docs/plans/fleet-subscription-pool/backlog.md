@@ -62,7 +62,7 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 
 | ID | Kind | Item | Status | Notes |
 | --- | --- | --- | --- | --- |
-| F8 | agent | Pure scheduling package: effective priority (base + capped aging), per-owner fair share, quota gate (`remaining < est_cost` excludes), weekly pacing, head-of-line backfill. Table-driven tests only, no I/O. | todo | Plan D10. |
+| F8 | agent | Pure scheduling package: effective priority (base + capped aging), per-owner fair share, quota gate (`remaining < est_cost` excludes), weekly pacing, head-of-line backfill. Table-driven tests only, no I/O. | done | `apps/fleet/internal/schedule`. `DefaultPolicy`: base critical 10000 / high 1000 / medium 300 / low 100; aging 2, 1, 0.5 per minute capped so low reaches medium and medium reaches high, nothing passes critical. Quota gate uses an estimated 10 % of 5 h and 2 % of the week until baseline data exists. Pacing applies to medium (10 % slack) and low (0 %) only and needs a known weekly reset. Every waiting task gets a reason (`no_seat`, `labels`, `seats_full`, `quota`, `weekly_pacing`). Fair share across owners is not implemented: with owner matching each owner only uses their own seats; revisit with P4-05. |
 | F9 | agent | Dispatcher loop: reconcile every 15-30 s plus `task.subscribe` events; candidate tasks = start_agent=false in the configured intake step with an assignee; claim in store (idempotent), launch via `session.launch` on the owner's seat executor profile; retry budget; audit log. | todo | Covers old P3-01, P3-02. |
 | C3 | core | Expose `quota_limited` code and `reset_at` on the session state event (or a REST read) so fleetd can move a seat to cooldown. | todo | Classification exists in `routingerr`; find where the session failure reason is persisted. |
 | F10 | agent | Limit handling: on `quota_limited` mark seat cooldown with reset time; requeue the task per D6 (dynamic profile handles short waits) or offer handoff. | todo | Depends on C3. |
@@ -111,3 +111,4 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 - 2026-10-26: F5 done (fleet-agent run/preflight/checkpoint).
 - 2026-10-26: F6 done (seat admin API).
 - 2026-10-26: F7 seat metrics done; queue/dispatch/handoff metrics deferred to F9/F11.
+- 2026-10-26: F8 done (pure scheduler).
