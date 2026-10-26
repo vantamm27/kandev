@@ -79,7 +79,7 @@ docker compose -p fleetd -f compose.fleetd.yml exec fleetd fleetd token create -
 
 - The Kandev UI opens and existing tasks and sessions are listed.
 - `curl -fsS http://127.0.0.1:<port>/api/v1/workspaces/<id>/stats/usage-breakdown` returns JSON.
-- `curl -fsS http://127.0.0.1:8484/metrics` lists `fleet_seat_info`.
+- `curl -fsS http://127.0.0.1:8484/metrics` lists `fleet_seats`.
 
 ## Rollback
 
