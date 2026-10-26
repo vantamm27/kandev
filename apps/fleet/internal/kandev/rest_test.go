@@ -145,3 +145,14 @@ func TestAPIErrors(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestGetWorkspaceReadsTheDefaultAgentProfile(t *testing.T) {
+	client, rec := restServer(t, http.StatusOK, `{"id":"ws-1","name":"fleet","default_agent_profile_id":"agent-1"}`)
+	ws, err := client.GetWorkspace(context.Background(), "ws-1")
+	if err != nil || ws.ID != "ws-1" || ws.DefaultAgentProfileID != "agent-1" {
+		t.Fatalf("GetWorkspace = %+v, %v", ws, err)
+	}
+	if rec.Method != http.MethodGet || rec.Path != "/api/v1/workspaces/ws-1" {
+		t.Fatalf("request = %s %s", rec.Method, rec.Path)
+	}
+}

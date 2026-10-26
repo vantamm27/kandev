@@ -68,6 +68,13 @@ type CreateExecutorProfileInput struct {
 	CleanupScript string            `json:"cleanup_script"`
 }
 
+// Workspace is the subset of a Kandev workspace fleetd reads.
+type Workspace struct {
+	ID                    string `json:"id"`
+	Name                  string `json:"name"`
+	DefaultAgentProfileID string `json:"default_agent_profile_id,omitempty"`
+}
+
 // Task is the subset of Kandev's TaskDTO fleetd uses.
 type Task struct {
 	ID                  string    `json:"id"`

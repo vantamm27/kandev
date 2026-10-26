@@ -34,7 +34,10 @@ type Config struct {
 	// there must be created with start_agent=false so Kandev does not start
 	// them on its default executor.
 	IntakeStepID string
-	MaxAttempts  int
+	// AgentProfileID is sent with every launch: a task created with
+	// start_agent=false has no agent profile of its own.
+	AgentProfileID string
+	MaxAttempts    int
 	// RetryBackoff is the wait after the first failed attempt; it doubles
 	// for each further attempt.
 	RetryBackoff time.Duration
@@ -293,7 +296,8 @@ func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileI
 		return false
 	}
 	res, err := d.launcher.LaunchSession(ctx, kandev.LaunchSessionInput{
-		TaskID: a.TaskID, Intent: kandev.IntentStart, ExecutorProfileID: profileID, Priority: priority,
+		TaskID: a.TaskID, Intent: kandev.IntentStart, AgentProfileID: d.cfg.AgentProfileID,
+		ExecutorProfileID: profileID, Priority: priority,
 	})
 	if err == nil && !res.Success {
 		err = errors.New("session.launch returned success=false")

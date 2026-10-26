@@ -76,6 +76,7 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `FLEET_METRICS_TOKEN` | empty | Bearer token required on `/metrics`; empty leaves it open (keep fleetd inside the VPN). |
 | `FLEET_WORKSPACE_ID` | empty | Kandev workspace the dispatcher reads tasks from. |
 | `FLEET_INTAKE_STEP_ID` | empty | Workflow step where tasks wait for a seat; with this or the workspace empty, the dispatcher does not run. |
+| `FLEET_AGENT_PROFILE_ID` | empty | Kandev agent profile dispatched sessions run; empty uses the workspace's default agent profile. |
 | `FLEET_DISPATCH_INTERVAL` | `20s` | Time between dispatch rounds. |
 
 ## Dispatching

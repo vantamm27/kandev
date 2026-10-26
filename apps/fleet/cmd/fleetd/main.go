@@ -171,8 +171,16 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 		close(done)
 		return done
 	}
+	agentProfileID, err := resolveAgentProfile(ctx, cfg, client)
+	if err != nil {
+		log.Error("dispatcher disabled", "error", err)
+		close(done)
+		return done
+	}
 	launcher := kandev.NewLauncher(cfg.KandevURL, cfg.KandevToken)
-	d := dispatch.New(dispatch.Config{WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID}, db, client, launcher, log)
+	d := dispatch.New(dispatch.Config{
+		WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID, AgentProfileID: agentProfileID,
+	}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
 	d.Nudges = nudge.New(db, client, launcher, log)
 	deps.Dispatch = d
@@ -181,8 +189,29 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	go func() {
 		defer close(done)
 		defer func() { _ = launcher.Close() }()
-		log.Info("dispatcher running", "workspace_id", cfg.WorkspaceID, "intake_step_id", cfg.IntakeStepID, "interval", cfg.DispatchInterval.String())
+		log.Info("dispatcher running", "workspace_id", cfg.WorkspaceID, "intake_step_id", cfg.IntakeStepID,
+			"agent_profile_id", agentProfileID, "interval", cfg.DispatchInterval.String())
 		d.Run(ctx, cfg.DispatchInterval)
 	}()
 	return done
+}
+
+type workspaceReader interface {
+	GetWorkspace(ctx context.Context, id string) (kandev.Workspace, error)
+}
+
+// resolveAgentProfile picks the agent profile dispatched sessions run:
+// FLEET_AGENT_PROFILE_ID, else the workspace's default agent profile.
+func resolveAgentProfile(ctx context.Context, cfg config.Config, workspaces workspaceReader) (string, error) {
+	if cfg.AgentProfileID != "" {
+		return cfg.AgentProfileID, nil
+	}
+	ws, err := workspaces.GetWorkspace(ctx, cfg.WorkspaceID)
+	if err != nil {
+		return "", fmt.Errorf("read workspace %s: %w", cfg.WorkspaceID, err)
+	}
+	if ws.DefaultAgentProfileID == "" {
+		return "", fmt.Errorf("workspace %s has no default agent profile; set one or FLEET_AGENT_PROFILE_ID", cfg.WorkspaceID)
+	}
+	return ws.DefaultAgentProfileID, nil
 }

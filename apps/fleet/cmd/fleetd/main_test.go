@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
@@ -10,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/kandev/kandev/apps/fleet/internal/config"
+	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
@@ -53,5 +56,33 @@ func TestCommandErrors(t *testing.T) {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+type fakeWorkspaces struct {
+	ws  kandev.Workspace
+	err error
+}
+
+func (f fakeWorkspaces) GetWorkspace(context.Context, string) (kandev.Workspace, error) {
+	return f.ws, f.err
+}
+
+func TestResolveAgentProfile(t *testing.T) {
+	ctx := context.Background()
+	cfg := config.Config{WorkspaceID: "ws-1"}
+	if got, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{ws: kandev.Workspace{DefaultAgentProfileID: "ws-default"}}); err != nil || got != "ws-default" {
+		t.Fatalf("workspace default = %q, %v", got, err)
+	}
+	cfg.AgentProfileID = "explicit"
+	if got, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{err: errors.New("unreachable")}); err != nil || got != "explicit" {
+		t.Fatalf("explicit setting must win without a lookup: %q, %v", got, err)
+	}
+	cfg.AgentProfileID = ""
+	if _, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{}); err == nil {
+		t.Fatal("a workspace without a default agent profile must be an error")
+	}
+	if _, err := resolveAgentProfile(ctx, cfg, fakeWorkspaces{err: errors.New("boom")}); err == nil {
+		t.Fatal("a failed lookup must be an error")
 	}
 }

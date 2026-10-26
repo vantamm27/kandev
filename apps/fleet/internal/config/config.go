@@ -34,6 +34,9 @@ type Config struct {
 	// either empty the dispatcher does not run.
 	WorkspaceID  string
 	IntakeStepID string
+	// AgentProfileID is the Kandev agent profile dispatched sessions run;
+	// empty means the workspace's default agent profile.
+	AgentProfileID string
 	// DispatchInterval is the time between dispatch rounds.
 	DispatchInterval time.Duration
 }
@@ -69,6 +72,7 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		MetricsToken:      get("FLEET_METRICS_TOKEN", ""),
 		WorkspaceID:       get("FLEET_WORKSPACE_ID", ""),
 		IntakeStepID:      get("FLEET_INTAKE_STEP_ID", ""),
+		AgentProfileID:    get("FLEET_AGENT_PROFILE_ID", ""),
 	}
 	interval, err := time.ParseDuration(get("FLEET_DISPATCH_INTERVAL", defaultDispatchInterval.String()))
 	if err != nil || interval < time.Second {

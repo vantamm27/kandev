@@ -73,3 +73,10 @@ func TestSSHIdentityFile(t *testing.T) {
 		t.Fatalf("cfg = %+v, err = %v", cfg, err)
 	}
 }
+
+func TestAgentProfileOverride(t *testing.T) {
+	cfg, err := fromLookup(lookupFrom(map[string]string{"FLEET_AGENT_PROFILE_ID": " agent-1 "}))
+	if err != nil || cfg.AgentProfileID != "agent-1" {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+}

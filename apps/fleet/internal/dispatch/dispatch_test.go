@@ -69,7 +69,7 @@ func newFixture(t *testing.T, seats ...store.Seat) (*store.Store, *fakeTasks, *f
 	}
 	tasks := &fakeTasks{}
 	launcher := &fakeLauncher{}
-	d := New(Config{WorkspaceID: "ws-1", IntakeStepID: "step-intake", MaxAttempts: 2, RetryBackoff: time.Minute}, st, tasks, launcher,
+	d := New(Config{WorkspaceID: "ws-1", IntakeStepID: "step-intake", AgentProfileID: "agent-prof", MaxAttempts: 2, RetryBackoff: time.Minute}, st, tasks, launcher,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	clock := t0.Add(time.Minute)
 	d.now = func() time.Time { return clock }
@@ -101,8 +101,8 @@ func TestRoundLaunchesEligibleTasksOnOwnerSeat(t *testing.T) {
 	got := map[string]string{}
 	for _, c := range launcher.calls {
 		got[c.TaskID] = c.ExecutorProfileID
-		if c.Intent != kandev.IntentStart {
-			t.Fatalf("intent = %q", c.Intent)
+		if c.Intent != kandev.IntentStart || c.AgentProfileID != "agent-prof" {
+			t.Fatalf("launch = %+v; want intent start with the configured agent profile", c)
 		}
 	}
 	if len(got) != 2 || got["t-a"] != "prof-a1" || got["t-b"] != "prof-b1" {

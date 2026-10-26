@@ -72,6 +72,13 @@ func (c *Client) CreateExecutorProfile(ctx context.Context, executorID string, i
 	return out, err
 }
 
+// GetWorkspace reads one workspace.
+func (c *Client) GetWorkspace(ctx context.Context, id string) (Workspace, error) {
+	var out Workspace
+	err := c.do(ctx, http.MethodGet, "/api/v1/workspaces/"+url.PathEscape(id), nil, &out)
+	return out, err
+}
+
 // GetTask reads one task.
 func (c *Client) GetTask(ctx context.Context, id string) (Task, error) {
 	var out Task
