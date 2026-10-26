@@ -89,12 +89,17 @@ func sshEnvScript(goos string) string {
 }
 
 // checkSSHEnv runs the login shell the way sshd runs a remote command, with
-// only the variables sshd sets, so the parent environment cannot hide a gap.
+// only sshd's variables, so the parent environment cannot hide a gap.
 func checkSSHEnv(home, shell, goos string) func(context.Context) CheckResult {
 	return func(ctx context.Context) CheckResult {
 		cmd := exec.CommandContext(ctx, shell, "-c", sshEnvScript(goos))
 		cmd.Dir = home
-		cmd.Env = []string{"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath}
+		// bash reads ~/.bashrc for a non-interactive command only when the
+		// SSH_CLIENT/SSH_CONNECTION variables show that sshd started it.
+		cmd.Env = []string{
+			"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath,
+			"SSH_CLIENT=127.0.0.1 0 22", "SSH_CONNECTION=127.0.0.1 0 127.0.0.1 22",
+		}
 		out, err := cmd.Output()
 		detail := strings.TrimSpace(string(out))
 		if err != nil {

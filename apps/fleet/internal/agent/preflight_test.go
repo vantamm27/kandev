@@ -134,3 +134,28 @@ func TestSSHEnvCheckAcceptsTheCredentialsFileOffMacOS(t *testing.T) {
 		t.Fatal("macOS must still require the token: the keychain is not readable over SSH")
 	}
 }
+
+func TestSSHEnvCheckLooksLikeAnSSHSession(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not installed")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Like bash, this shell reads its startup file only when sshd started it.
+	wrapper := filepath.Join(home, "shell")
+	script := "#!/bin/sh\nif [ -n \"$SSH_CLIENT\" ] && [ -n \"$SSH_CONNECTION\" ]; then export CLAUDE_CODE_OAUTH_TOKEN=x; fi\n" +
+		"PATH=\"" + bin + ":$PATH\" exec " + sh + " \"$@\"\n"
+	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r := checkSSHEnv(home, wrapper, "linux")(context.Background()); !r.OK {
+		t.Fatalf("shell started like sshd = %+v", r)
+	}
+}
