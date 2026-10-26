@@ -126,3 +126,4 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 - 2026-10-26: U1 done (Fleet UI plugin). All code-only backlog items are done; the rest need infra, spikes, or user decisions.
 - 2026-10-26: DEP1 Kandev fork and fleetd deployed on 10.8.0.238; dispatcher off until workspace and intake step are chosen.
 - 2026-10-27: S1 partial: keychain is unreadable over SSH; seats need `claude setup-token` and `~/.zshenv` (verified on seat 1; preflight `ssh-env` check added).
+- 2026-10-27: second seat `seat_9eb75930014476f8` on Linux worker 10.0.28.229 (`ec2-user`, label `linux`), formerly Kandev executor `worker-1` on an API key (removed, backups kept). Needed: SG rule TCP 8484 from the worker to the Kandev host, token exported from `~/.bashrc`, systemd user unit with linger.
