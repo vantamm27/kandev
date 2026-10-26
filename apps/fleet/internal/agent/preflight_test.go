@@ -76,7 +76,7 @@ func TestSSHEnvCheckUsesTheShellStartupFilesOnly(t *testing.T) {
 	}
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "from-the-parent-process")
 
-	r := checkSSHEnv(home, zsh)(context.Background())
+	r := checkSSHEnv(home, zsh, "darwin")(context.Background())
 	if r.OK || !strings.Contains(r.Detail, "claude not found") {
 		t.Fatalf("without startup files = %+v", r)
 	}
@@ -85,7 +85,7 @@ func TestSSHEnvCheckUsesTheShellStartupFilesOnly(t *testing.T) {
 	if err := os.WriteFile(zshenv, []byte("export PATH=\""+bin+":$PATH\"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r = checkSSHEnv(home, zsh)(context.Background())
+	r = checkSSHEnv(home, zsh, "darwin")(context.Background())
 	if r.OK || !strings.Contains(r.Detail, "CLAUDE_CODE_OAUTH_TOKEN") {
 		t.Fatalf("PATH only = %+v", r)
 	}
@@ -93,8 +93,44 @@ func TestSSHEnvCheckUsesTheShellStartupFilesOnly(t *testing.T) {
 	if err := os.WriteFile(zshenv, []byte("export PATH=\""+bin+":$PATH\"\nexport CLAUDE_CODE_OAUTH_TOKEN=secret-value\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r = checkSSHEnv(home, zsh)(context.Background())
+	r = checkSSHEnv(home, zsh, "darwin")(context.Background())
 	if !r.OK || strings.Contains(r.Detail, "secret-value") {
 		t.Fatalf("PATH and token = %+v", r)
+	}
+}
+
+func TestSSHEnvCheckAcceptsTheCredentialsFileOffMacOS(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not installed")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(filepath.Join(home, ".claude"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// sh reads no startup file here, so put claude on sshd's default PATH via a
+	// wrapper shell that extends PATH first.
+	wrapper := filepath.Join(home, "shell")
+	if err := os.WriteFile(wrapper, []byte("#!/bin/sh\nPATH=\""+bin+":$PATH\" exec "+sh+" \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if r := checkSSHEnv(home, wrapper, "linux")(context.Background()); r.OK {
+		t.Fatalf("no login at all = %+v", r)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".claude", ".credentials.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if r := checkSSHEnv(home, wrapper, "linux")(context.Background()); !r.OK {
+		t.Fatalf("credentials file on linux = %+v", r)
+	}
+	if r := checkSSHEnv(home, wrapper, "darwin")(context.Background()); r.OK {
+		t.Fatal("macOS must still require the token: the keychain is not readable over SSH")
 	}
 }

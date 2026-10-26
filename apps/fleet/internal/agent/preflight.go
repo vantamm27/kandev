@@ -35,7 +35,7 @@ const MinFreeDiskBytes = 20 << 30
 func DefaultChecks(home, shell string, sshPort int) []Check {
 	return []Check{
 		{Name: "claude", Run: checkBinary("claude")},
-		{Name: "ssh-env", Run: checkSSHEnv(home, shell)},
+		{Name: "ssh-env", Run: checkSSHEnv(home, shell, runtime.GOOS)},
 		{Name: "git", Run: checkBinary("git")},
 		{Name: "sshd", Run: checkTCP(fmt.Sprintf("127.0.0.1:%d", sshPort))},
 		{Name: "disk", Run: checkDisk(home, MinFreeDiskBytes)},
@@ -71,18 +71,28 @@ func checkBinary(name string) func(context.Context) CheckResult {
 // sshDefaultPath is the PATH sshd gives a non-interactive macOS session.
 const sshDefaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
-// sshEnvScript reports the first missing piece of a usable SSH session. The
-// login keychain cannot be read over SSH, so the subscription login must come
-// from a `claude setup-token` token exported by the shell startup files.
-const sshEnvScript = `command -v claude >/dev/null 2>&1 || { echo "claude not found in the SSH session PATH; extend PATH in the shell startup file"; exit 1; }
-[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "CLAUDE_CODE_OAUTH_TOKEN is not set in SSH sessions; run claude setup-token and export it from the shell startup file"; exit 1; }
-command -v claude`
+const sshClaudeOnPath = `command -v claude >/dev/null 2>&1 || { echo "claude not found in the SSH session PATH; extend PATH in the shell startup file"; exit 1; }
+`
+
+// sshEnvScript reports the first missing piece of a usable SSH session. On
+// macOS the login keychain cannot be read over SSH, so the subscription login
+// must come from a `claude setup-token` token exported by the shell startup
+// files; elsewhere Claude Code's credentials file works too.
+func sshEnvScript(goos string) string {
+	login := `[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "CLAUDE_CODE_OAUTH_TOKEN is not set in SSH sessions; run claude setup-token and export it from the shell startup file"; exit 1; }
+`
+	if goos != "darwin" {
+		login = `[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || [ -f "$HOME/.claude/.credentials.json" ] || { echo "no Claude login for SSH sessions; run claude login, or export a claude setup-token token from the shell startup file"; exit 1; }
+`
+	}
+	return sshClaudeOnPath + login + "command -v claude"
+}
 
 // checkSSHEnv runs the login shell the way sshd runs a remote command, with
 // only the variables sshd sets, so the parent environment cannot hide a gap.
-func checkSSHEnv(home, shell string) func(context.Context) CheckResult {
+func checkSSHEnv(home, shell, goos string) func(context.Context) CheckResult {
 	return func(ctx context.Context) CheckResult {
-		cmd := exec.CommandContext(ctx, shell, "-c", sshEnvScript)
+		cmd := exec.CommandContext(ctx, shell, "-c", sshEnvScript(goos))
 		cmd.Dir = home
 		cmd.Env = []string{"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath}
 		out, err := cmd.Output()
@@ -93,7 +103,7 @@ func checkSSHEnv(home, shell string) func(context.Context) CheckResult {
 			}
 			return CheckResult{Detail: detail}
 		}
-		return CheckResult{OK: true, Detail: "claude at " + detail + ", subscription token set"}
+		return CheckResult{OK: true, Detail: "claude at " + detail + ", subscription login available"}
 	}
 }
 
