@@ -1,0 +1,22 @@
+# Runs fleetd next to an existing Kandev container on the same host.
+# fleetd reaches Kandev through the host-published port, so it does not need to
+# join Kandev's compose project. Values come from fleetd.env (see README).
+#
+#   docker compose -f compose.fleetd.yml --env-file fleetd.env up -d
+
+services:
+  fleetd:
+    image: ${FLEETD_IMAGE:-fleetd:local}
+    restart: unless-stopped
+    env_file: fleetd.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Seats on the VPN post heartbeats here; keep the host firewall or the
+      # security group limited to the VPN range.
+      - "${FLEETD_BIND:-0.0.0.0}:8484:8484"
+    volumes:
+      - fleetd-data:/data
+
+volumes:
+  fleetd-data:

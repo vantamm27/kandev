@@ -1,0 +1,45 @@
+# Source build of the Kandev fork for a self-hosted Docker deployment.
+#
+# The repository root Dockerfile packages a prebuilt release bundle. This file
+# builds the same runtime layout from the checked-out source instead, then
+# overlays it on a published image so OS packages and the entrypoint stay
+# identical to upstream.
+#
+# Build from the repository root:
+#   docker build -f apps/fleet/deploy/Dockerfile.kandev -t kandev-fleet:local .
+
+ARG BASE_IMAGE=ghcr.io/kdlbs/kandev:universal
+
+FROM node:24-bookworm AS web
+WORKDIR /src
+ENV NODE_OPTIONS=--max-old-space-size=4096
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+COPY apps/ apps/
+RUN pnpm -C apps install --frozen-lockfile && \
+    VITE_KANDEV_API_PORT= VITE_KANDEV_DEBUG= pnpm -C apps --filter @kandev/web build
+
+FROM golang:1.26-bookworm AS backend
+ARG KANDEV_VERSION=0.98.0-fleet
+ARG KANDEV_COMMIT=unknown
+WORKDIR /src/apps/backend
+COPY apps/backend/go.mod apps/backend/go.sum ./
+RUN go mod download
+COPY apps/backend/ ./
+COPY --from=web /src/apps/web/dist/ internal/webapp/embedded/generated/
+RUN test -f internal/webapp/embedded/generated/index.html && \
+    LDFLAGS="-s -w -X main.Version=${KANDEV_VERSION} -X main.Commit=${KANDEV_COMMIT}" && \
+    go build -trimpath -buildvcs=false -tags fts5 -ldflags "$LDFLAGS" -o /out/kandev ./cmd/kandev && \
+    go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" -o /out/agentctl ./cmd/agentctl && \
+    for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64; do \
+      CGO_ENABLED=0 GOOS="${target%/*}" GOARCH="${target#*/}" \
+        go build -trimpath -buildvcs=false -ldflags "$LDFLAGS" \
+        -o "/out/agentctl-${target%/*}-${target#*/}" ./cmd/agentctl; \
+    done
+
+FROM ${BASE_IMAGE}
+COPY --from=backend /out/kandev /app/apps/backend/bin/kandev
+COPY --from=backend /out/agentctl-linux-amd64 /app/apps/backend/bin/agentctl-linux-amd64
+COPY --from=backend /out/agentctl-linux-arm64 /app/apps/backend/bin/agentctl-linux-arm64
+COPY --from=backend /out/agentctl-darwin-arm64 /app/apps/backend/bin/agentctl-darwin-arm64
+COPY --from=backend /out/agentctl-darwin-amd64 /app/apps/backend/bin/agentctl-darwin-amd64
+COPY --from=backend /out/agentctl /usr/local/bin/agentctl
