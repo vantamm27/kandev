@@ -34,6 +34,9 @@ On a Linux seat Claude Code keeps its login in a file, so the keychain step
 does not apply; use `--systemd-unit ~/.config/systemd/user/fleet-agent.service`
 instead of `--launch-agent`, and `sudo loginctl enable-linger <user>` so the
 unit runs without a login session.
+Over SSH, bash runs Kandev's commands as a non-interactive non-login shell,
+which reads `~/.bashrc` but not `~/.bash_profile`; an exported token belongs
+at the top of `~/.bashrc`, before any early return for non-interactive shells.
 
 
 ```sh
