@@ -146,11 +146,11 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	} else if n > 0 {
 		d.log.Warn("recovered claims left launching", "count", n)
 	}
-	queued, err := d.intakeTasks(ctx)
+	claims, err := d.store.ListClaims(ctx)
 	if err != nil {
 		return err
 	}
-	claims, err := d.store.ListClaims(ctx)
+	queued, err := d.intakeTasks(ctx, claims)
 	if err != nil {
 		return err
 	}
@@ -198,8 +198,10 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	return nil
 }
 
-// intakeTasks lists not-yet-started, assigned tasks in the intake step.
-func (d *Dispatcher) intakeTasks(ctx context.Context) ([]kandev.Task, error) {
+// intakeTasks lists the assigned tasks in the intake step that fleetd may
+// launch: those without a session, and those whose only session is a failed
+// launch of fleetd's own.
+func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, error) {
 	var out []kandev.Task
 	for page := 1; page <= maxPages; page++ {
 		res, err := d.tasks.ListWorkspaceTasks(ctx, d.cfg.WorkspaceID, kandev.ListTasksOptions{Page: page, PageSize: pageSize})
@@ -207,7 +209,7 @@ func (d *Dispatcher) intakeTasks(ctx context.Context) ([]kandev.Task, error) {
 			return nil, err
 		}
 		for _, t := range res.Tasks {
-			if t.WorkflowStepID == d.cfg.IntakeStepID && t.AssigneeUserID != "" && t.PrimarySessionID == nil {
+			if t.WorkflowStepID == d.cfg.IntakeStepID && t.AssigneeUserID != "" && launchable(t, claims) {
 				out = append(out, t)
 			}
 		}
@@ -217,6 +219,20 @@ func (d *Dispatcher) intakeTasks(ctx context.Context) ([]kandev.Task, error) {
 	}
 	d.log.Warn("intake listing truncated", "pages", maxPages)
 	return out, nil
+}
+
+// sessionFailed is Kandev's state for a session that ended in an error.
+const sessionFailed = "FAILED"
+
+// launchable reports whether a task's session state lets fleetd launch it. A
+// failed session is retried only when fleetd's own launch created it; any
+// other session belongs to a person or to a launch that is still running.
+func launchable(t kandev.Task, claims map[string]store.Claim) bool {
+	if t.PrimarySessionID == nil {
+		return true
+	}
+	c, ok := claims[t.ID]
+	return ok && c.State == store.ClaimFailed && t.PrimarySessionState != nil && *t.PrimarySessionState == sessionFailed
 }
 
 // seats returns schedulable seats, with free slots reduced by launches their

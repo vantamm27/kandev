@@ -1,0 +1,50 @@
+package dispatch
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/kandev/kandev/apps/fleet/internal/kandev"
+)
+
+func withSession(t kandev.Task, id, state string) kandev.Task {
+	t.PrimarySessionID, t.PrimarySessionState = &id, &state
+	return t
+}
+
+// A launch that Kandev accepted far enough to create a session, then failed
+// (for example on SSH), leaves a FAILED primary session behind. fleetd must
+// still retry its own failed launch.
+func TestRetriesOwnLaunchThatLeftAFailedSession(t *testing.T) {
+	_, tasks, launcher, d, clock := newFixture(t, seatFor("a1", "user-a", 1))
+	tasks.tasks = []kandev.Task{intake("t-1", "user-a", "high")}
+	launcher.err = errors.New("kandev: session.launch: host key changed")
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	tasks.tasks = []kandev.Task{withSession(intake("t-1", "user-a", "high"), "s-failed", "FAILED")}
+	launcher.err = nil
+	*clock = clock.Add(2 * time.Minute)
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.calls) != 2 {
+		t.Fatalf("calls = %d; fleetd's failed launch must be retried", len(launcher.calls))
+	}
+}
+
+func TestLeavesSessionsFleetdDidNotStart(t *testing.T) {
+	_, tasks, launcher, d, _ := newFixture(t, seatFor("a1", "user-a", 1))
+	tasks.tasks = []kandev.Task{
+		withSession(intake("t-ui-failed", "user-a", "high"), "s-1", "FAILED"),
+		withSession(intake("t-running", "user-a", "high"), "s-2", "RUNNING"),
+	}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.calls) != 0 {
+		t.Fatalf("launches = %+v; a session fleetd did not start is a person's", launcher.calls)
+	}
+}

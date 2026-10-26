@@ -1,9 +1,10 @@
-// Command fleet-agent runs on a node as the seat's macOS user.
+// Command fleet-agent runs on a node as the seat's OS user.
 //
 //	fleet-agent register --fleetd URL --token TOKEN --ssh-host HOST [flags]
 //	fleet-agent run [--config PATH] [--interval 30s]
 //	fleet-agent preflight [--ssh-port 22]
 //	fleet-agent checkpoint --worktree DIR --task ID [--remote origin] [--no-ci-skip]
+//	fleet-agent host-key [--ssh-port 22]
 package main
 
 import (
@@ -36,7 +37,7 @@ func main() {
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: fleet-agent register|run|preflight|checkpoint|version [flags]")
+		return errors.New("usage: fleet-agent register|run|preflight|checkpoint|host-key|version [flags]")
 	}
 	switch args[0] {
 	case "register":
@@ -47,6 +48,8 @@ func run(args []string, stdout io.Writer) error {
 		return preflight(args[1:], stdout)
 	case "checkpoint":
 		return checkpoint(args[1:], stdout)
+	case "host-key":
+		return printHostKey(args[1:], stdout)
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)
 		return err
@@ -66,7 +69,7 @@ func register(args []string, stdout io.Writer) error {
 	sshHost := fs.String("ssh-host", "", "address Kandev uses to reach this node (required)")
 	sshPort := fs.Int("ssh-port", 22, "sshd port")
 	sshUser := fs.String("ssh-user", "", "this seat's OS user (default: current user)")
-	hostKey := fs.String("host-key", agent.DefaultHostKeyFile, "sshd host public key file")
+	hostKey := fs.String("host-key", "", "pin this sshd host public key file instead of probing the local sshd")
 	labels := fs.String("labels", "", "comma-separated node labels, for example macos,xcode")
 	capacity := fs.Int("capacity", 1, "concurrent tasks for this seat")
 	configPath := fs.String("config", defaultConfig, "where to save the registration")
@@ -89,12 +92,12 @@ func register(args []string, stdout io.Writer) error {
 		}
 		*sshUser = current.Username
 	}
-	fingerprint, err := agent.HostKeyFingerprintFile(*hostKey)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	fingerprint, err := seatHostKeyFingerprint(ctx, *hostKey, *sshPort)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
 	res, err := agent.Register(ctx, agent.NewHTTPClient(), *fleetd, agent.RegisterRequest{
 		Token: *token, SSHHost: *sshHost, SSHPort: *sshPort, SSHUser: *sshUser,
 		HostKeyFingerprint: fingerprint, Labels: splitList(*labels), Capacity: *capacity, AgentVersion: version,
@@ -143,6 +146,33 @@ func writeSystemdUnit(path, configPath string, stdout io.Writer) error {
 	_, err = fmt.Fprintf(stdout, "systemd unit: %s\nstart it with: systemctl --user daemon-reload && systemctl --user enable --now %s\n"+
 		"keep it running without a login session: sudo loginctl enable-linger $USER\n", path, agent.SystemdUnitName)
 	return err
+}
+
+// printHostKey prints the fingerprint register would pin, for checking or
+// repairing a seat's Kandev executor.
+func printHostKey(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("host-key", flag.ContinueOnError)
+	sshPort := fs.Int("ssh-port", 22, "sshd port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fingerprint, err := seatHostKeyFingerprint(ctx, "", *sshPort)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, fingerprint)
+	return err
+}
+
+// seatHostKeyFingerprint pins the host key Kandev will see: the one the local
+// sshd presents to a default Go SSH client, unless a key file is named.
+func seatHostKeyFingerprint(ctx context.Context, hostKeyFile string, sshPort int) (string, error) {
+	if hostKeyFile != "" {
+		return agent.HostKeyFingerprintFile(hostKeyFile)
+	}
+	return agent.NegotiatedHostKeyFingerprint(ctx, fmt.Sprintf("127.0.0.1:%d", sshPort))
 }
 
 func writeLaunchAgent(path, configPath string, stdout io.Writer) error {

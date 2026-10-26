@@ -10,9 +10,6 @@ import (
 	"strings"
 )
 
-// DefaultHostKeyFile is the node's ed25519 host public key on macOS and Linux.
-const DefaultHostKeyFile = "/etc/ssh/ssh_host_ed25519_key.pub"
-
 // HostKeyFingerprint returns the OpenSSH SHA256 fingerprint
 // ("SHA256:<unpadded base64>") of the public key in an authorized_keys or
 // *.pub line, the same value `ssh-keygen -lf` prints and Kandev pins.
