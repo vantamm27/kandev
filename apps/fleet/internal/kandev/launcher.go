@@ -22,15 +22,30 @@ func NewLauncher(baseURL, token string) *Launcher {
 
 // LaunchSession starts a session, dialing a connection when needed.
 func (l *Launcher) LaunchSession(ctx context.Context, in LaunchSessionInput) (LaunchSessionResult, error) {
+	var res LaunchSessionResult
+	err := l.with(ctx, func(conn *Conn) error {
+		var err error
+		res, err = conn.LaunchSession(ctx, in)
+		return err
+	})
+	return res, err
+}
+
+// AddMessage sends message.add on the shared connection.
+func (l *Launcher) AddMessage(ctx context.Context, taskID, sessionID, content string) error {
+	return l.with(ctx, func(conn *Conn) error { return conn.AddMessage(ctx, taskID, sessionID, content) })
+}
+
+func (l *Launcher) with(ctx context.Context, call func(*Conn) error) error {
 	conn, err := l.connection(ctx)
 	if err != nil {
-		return LaunchSessionResult{}, err
+		return err
 	}
-	res, err := conn.LaunchSession(ctx, in)
+	err = call(conn)
 	if errors.Is(err, ErrConnClosed) {
 		l.drop(conn)
 	}
-	return res, err
+	return err
 }
 
 // Close closes the current connection, if any.

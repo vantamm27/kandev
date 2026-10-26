@@ -63,6 +63,16 @@ profile. A failed launch is retried with backoff (1 min, doubling) up to 3
 attempts; a claim left "launching" by a crash is retried after 5 minutes.
 Launches the seat's heartbeat has not reported yet still hold their slot.
 
+After each round fleetd also:
+
+- **Nudges** running tasks on a seat whose reported 5-hour or weekly usage is
+  at least 85 %: a `message.add` asks the agent to update PROGRESS.md, commit,
+  and push to `refs/agent-wip/<task>`. At most once per task per 5 hours.
+- **Offers handoffs** for launched tasks on a seat at its weekly limit, or at
+  its 5-hour limit with the reset unknown or more than 2 hours away. Shorter
+  5-hour waits are left to the Kandev dynamic profile. Accept with
+  `POST /v1/admin/handoffs/{id}/accept`.
+
 ## API
 
 | Endpoint | Auth | Purpose |

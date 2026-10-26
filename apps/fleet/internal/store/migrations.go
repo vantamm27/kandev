@@ -71,4 +71,7 @@ var migrations = []string{
 	ALTER TABLE seats ADD COLUMN limit_reason TEXT NOT NULL DEFAULT '';
 	ALTER TABLE seats ADD COLUMN last_signed_at INTEGER NOT NULL DEFAULT 0;
 	`,
+	`
+	ALTER TABLE dispatch_claims ADD COLUMN nudged_at TIMESTAMP;
+	`,
 }

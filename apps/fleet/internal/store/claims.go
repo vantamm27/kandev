@@ -139,3 +139,28 @@ func (s *Store) MoveClaim(ctx context.Context, taskID, seatID, sessionID string,
 	}
 	return nil
 }
+
+// MarkNudged records that the task's session was asked to checkpoint, unless
+// it was asked within `every`. It reports whether this call recorded a nudge.
+func (s *Store) MarkNudged(ctx context.Context, taskID string, every time.Duration, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET nudged_at = ?
+		WHERE task_id = ? AND state = ? AND (nudged_at IS NULL OR nudged_at < ?)`,
+		now.UTC(), taskID, ClaimLaunched, now.Add(-every).UTC())
+	if err != nil {
+		return false, fmt.Errorf("mark nudged: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("mark nudged: %w", err)
+	}
+	return n == 1, nil
+}
+
+// ClearNudge forgets a nudge, used when sending it failed.
+func (s *Store) ClearNudge(ctx context.Context, taskID string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET nudged_at = NULL WHERE task_id = ?`, taskID)
+	if err != nil {
+		return fmt.Errorf("clear nudge: %w", err)
+	}
+	return nil
+}

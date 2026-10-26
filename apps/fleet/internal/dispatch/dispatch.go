@@ -51,7 +51,7 @@ type Stats struct {
 	Exhausted int // tasks that used up their attempts
 }
 
-// LimitScanner offers handoffs for tasks blocked by usage limits.
+// LimitScanner runs a post-round scan (limit handoffs, checkpoint nudges).
 type LimitScanner interface {
 	Scan(ctx context.Context, now time.Time) (int, error)
 }
@@ -64,8 +64,9 @@ type Dispatcher struct {
 	launcher Launcher
 	log      *slog.Logger
 	now      func() time.Time
-	// Limits, when set, runs after each round's launches.
+	// Limits and Nudges, when set, run after each round's launches.
 	Limits LimitScanner
+	Nudges LimitScanner
 
 	mu       sync.Mutex
 	last     Stats
@@ -174,6 +175,11 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 			stats.Launched++
 		} else {
 			stats.Failed++
+		}
+	}
+	if d.Nudges != nil {
+		if _, err := d.Nudges.Scan(ctx, d.now()); err != nil {
+			d.log.Warn("checkpoint nudge scan failed", "error", err)
 		}
 	}
 	if d.Limits != nil {

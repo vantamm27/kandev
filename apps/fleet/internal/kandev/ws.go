@@ -169,6 +169,14 @@ func (c *Conn) LaunchSession(ctx context.Context, in LaunchSessionInput) (Launch
 	return out, err
 }
 
+// AddMessage sends message.add: a user message to a task session. Kandev
+// queues it when the agent is mid-turn.
+func (c *Conn) AddMessage(ctx context.Context, taskID, sessionID, content string) error {
+	return c.Request(ctx, "message.add", map[string]string{
+		"task_id": taskID, "session_id": sessionID, "content": content,
+	}, nil)
+}
+
 // SubscribeTask sends task.subscribe so the connection receives the task's
 // notifications.
 func (c *Conn) SubscribeTask(ctx context.Context, taskID string) error {

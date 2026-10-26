@@ -24,6 +24,7 @@ import (
 	"github.com/kandev/kandev/apps/fleet/internal/handoff"
 	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/limits"
+	"github.com/kandev/kandev/apps/fleet/internal/nudge"
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
 	"github.com/kandev/kandev/apps/fleet/internal/server"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
@@ -173,6 +174,7 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	launcher := kandev.NewLauncher(cfg.KandevURL, cfg.KandevToken)
 	d := dispatch.New(dispatch.Config{WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
+	d.Nudges = nudge.New(db, client, launcher, log)
 	deps.Dispatch = d
 	deps.Handoffs = handoff.New(db, client, launcher, log)
 	deps.HandoffCounts = db

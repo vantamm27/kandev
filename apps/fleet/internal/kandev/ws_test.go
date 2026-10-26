@@ -180,3 +180,22 @@ func TestDialRejectsUnsupportedScheme(t *testing.T) {
 		t.Fatal("expected an error")
 	}
 }
+
+func TestAddMessagePayload(t *testing.T) {
+	var got Message
+	_, url := newFakeKandevWS(t, func(msg Message) *Message {
+		got = msg
+		return &Message{ID: msg.ID, Type: "response", Action: msg.Action, Payload: json.RawMessage(`{}`)}
+	})
+	conn := dialTest(t, url)
+	if err := conn.AddMessage(testCtx(t), "task-1", "sess-1", "please checkpoint"); err != nil {
+		t.Fatalf("AddMessage: %v", err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != "message.add" || payload["task_id"] != "task-1" || payload["session_id"] != "sess-1" || payload["content"] != "please checkpoint" {
+		t.Fatalf("sent %s %+v", got.Action, payload)
+	}
+}
