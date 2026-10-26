@@ -173,3 +173,4 @@ apps/backend/.manual-env/
 
 # Fleet service build output
 apps/fleet/bin/
+apps/fleet/kandev-plugin/.build/

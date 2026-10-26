@@ -71,7 +71,13 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 | F12 | agent | Proactive checkpoint at >= 85 % quota: send `message.add` asking the agent to update PROGRESS.md and push WIP. | done | `internal/nudge`, `kandev.Conn.AddMessage`, migration 3 (`dispatch_claims.nudged_at`). Online/busy seats at >= 85 % 5 h or weekly usage; once per task per 5 h; done tasks skipped; a failed send is retried. The message tells the agent the exact `git push ... refs/agent-wip/<task>` command, so it does not depend on P3-04 hooks. |
 | P3-04 | infra | Claude Code hooks (`Stop`, `PostToolUse`) auto-commit WIP; shared checkpoint prompt template (template text can live in `apps/fleet/templates`). | todo | Hook install is per node (managed settings). |
 | C5 | core | Allow the fleet service account to dispatch on seat executors, if S4 shows it is blocked. | blocked | Waits on P0-08. |
-| U1 | plugin | Fleet UI plugin: seats page, queue, handoff banner + "Take task" calling fleetd through an authenticated plugin webhook. | todo | After F6/F11. |
+| U1 | plugin | Fleet UI plugin: seats page, queue, handoff banner + "Take task" calling fleetd through an authenticated plugin webhook. | done | `apps/fleet/kandev-plugin` (own Go module, `replace` to the backend for `pluginsdk`). Authenticated actions `fleet.overview` and `fleet.handoff.accept`; the seat is chosen from Kandev's verified `actorID`, never the browser. Admin token stays in plugin config. `/fleet` page (plain `host.jsx`, no build step). Tests: Kandev's manifest parser, `plugin-pack` + `pkgtar.Install`, backend action tests; `node --check` on the bundle. Not yet rendered in a live Kandev (needs DEP1 or a local instance); UI strings are English only. A per-task banner slot is not done. |
+
+## Ideas
+
+| ID | Kind | Item | Status | Notes |
+| --- | --- | --- | --- | --- |
+| I1 | plugin | Evaluate a Kandev executor provider (`executor_providers` in the plugin manifest) backed by fleetd, so Kandev asks fleetd for a seat at launch instead of fleetd launching onto fixed SSH executors. | todo | Seen in `cmd/plugin-fixture`; would remove the intake-step polling. Large change; only after the current design runs in production. |
 
 ## Phase 4: Optimization and scale-out
 
@@ -117,3 +123,4 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 - 2026-10-26: F10 done (handoff offers for limit-blocked tasks). C3 deferred to after S2 with the code paths recorded.
 - 2026-10-26: F11 done (accept handoff, resume path). F11b split out pending S3.
 - 2026-10-26: F12 done (checkpoint nudges).
+- 2026-10-26: U1 done (Fleet UI plugin). All code-only backlog items are done; the rest need infra, spikes, or user decisions.

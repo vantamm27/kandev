@@ -1,0 +1,48 @@
+id: "kandev-fleet"
+api_version: 2
+min_kandev_version: "0.91.1"
+version: "0.1.0"
+display_name: "Fleet"
+description: "Seats, usage limits, and handoffs for the fleetd seat pool"
+author: "vantamm27"
+categories: ["tools"]
+
+runtime:
+  type: binary
+  executables:
+    linux-amd64: "server/plugin-linux-amd64"
+    linux-arm64: "server/plugin-linux-arm64"
+    darwin-arm64: "server/plugin-darwin-arm64"
+
+ui:
+  bundle: "/ui/bundle.js"
+
+# The plugin calls fleetd's admin API with the token below; the token never
+# reaches the browser. Members act through authenticated actions, so fleetd
+# sees which Kandev user took a handoff.
+config_schema:
+  type: object
+  properties:
+    fleetd_url:
+      {
+        type: string,
+        title: "fleetd URL",
+        description: "Base URL of fleetd, for example http://fleetd.internal:8484",
+      }
+    admin_token:
+      {
+        type: string,
+        secret: true,
+        title: "fleetd admin token",
+        description: "The FLEET_ADMIN_TOKEN configured on fleetd",
+      }
+
+actions:
+  - key: "fleet.overview"
+    scope: "workspace"
+    access: "authenticated"
+    max_body_bytes: 1024
+  - key: "fleet.handoff.accept"
+    scope: "workspace"
+    access: "authenticated"
+    max_body_bytes: 1024
