@@ -85,8 +85,16 @@ func sshEnvScript(goos string) string {
 		login = `[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || [ -f "$HOME/.claude/.credentials.json" ] || { echo "no Claude login for SSH sessions; run claude login, or export a claude setup-token token from the shell startup file"; exit 1; }
 `
 	}
-	return sshClaudeOnPath + login + "command -v claude"
+	return sshClaudeOnPath + login + sshNoAPIBilling + "command -v claude"
 }
+
+// sshNoAPIBilling fails when the SSH session would send Claude Code to API
+// billing or a gateway instead of the seat's subscription login.
+const sshNoAPIBilling = `for v in ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL; do
+  eval "val=\${$v:-}"
+  [ -z "$val" ] || { echo "$v is set in SSH sessions; remove it so Claude Code uses the seat's subscription"; exit 1; }
+done
+`
 
 // checkSSHEnv runs the login shell the way sshd runs a remote command, with
 // only sshd's variables, so the parent environment cannot hide a gap.

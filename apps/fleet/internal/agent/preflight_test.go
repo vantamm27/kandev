@@ -159,3 +159,29 @@ func TestSSHEnvCheckLooksLikeAnSSHSession(t *testing.T) {
 		t.Fatalf("shell started like sshd = %+v", r)
 	}
 }
+
+func TestSSHEnvCheckRejectsAPIBillingVariables(t *testing.T) {
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not installed")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"} {
+		wrapper := filepath.Join(home, "shell-"+key)
+		script := "#!/bin/sh\nexport CLAUDE_CODE_OAUTH_TOKEN=x " + key + "=y\nPATH=\"" + bin + ":$PATH\" exec " + sh + " \"$@\"\n"
+		if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		r := checkSSHEnv(home, wrapper, "linux")(context.Background())
+		if r.OK || !strings.Contains(r.Detail, key) || strings.Contains(r.Detail, "=y") {
+			t.Errorf("%s set = %+v; want a failure naming the variable, not its value", key, r)
+		}
+	}
+}
