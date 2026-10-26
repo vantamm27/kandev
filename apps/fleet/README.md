@@ -45,6 +45,23 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `FLEET_SSH_IDENTITY_FILE` | empty | Private key path on the Kandev host when the source is `file`. |
 | `FLEET_ADMIN_TOKEN` | empty | Bearer token for `/v1/admin`; empty disables the admin API. |
 | `FLEET_METRICS_TOKEN` | empty | Bearer token required on `/metrics`; empty leaves it open (keep fleetd inside the VPN). |
+| `FLEET_WORKSPACE_ID` | empty | Kandev workspace the dispatcher reads tasks from. |
+| `FLEET_INTAKE_STEP_ID` | empty | Workflow step where tasks wait for a seat; with this or the workspace empty, the dispatcher does not run. |
+| `FLEET_DISPATCH_INTERVAL` | `20s` | Time between dispatch rounds. |
+
+## Dispatching
+
+Each round fleetd lists the workspace's tasks and picks those that are in the
+intake step, have a human assignee, and have no session yet. Create them with
+`start_agent=false` (for example `create_task_kandev` with
+`assignee_user_id: "me"`), otherwise Kandev starts them on its default
+executor. The schedule package orders them (priority plus capped aging) and
+assigns each to one of the assignee's own seats that is online with a free
+slot, has the required labels, enough quota, and room in its weekly pacing.
+fleetd claims the task, then sends `session.launch` with the seat's executor
+profile. A failed launch is retried with backoff (1 min, doubling) up to 3
+attempts; a claim left "launching" by a crash is retried after 5 minutes.
+Launches the seat's heartbeat has not reported yet still hold their slot.
 
 ## API
 
@@ -58,7 +75,7 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `POST /v1/admin/seats/{id}/undrain` | admin | Return a draining seat to service. |
 | `POST /v1/admin/seats/{id}/retire[?force=true]` | admin | Delete the seat's Kandev executor and retire it. Without `force` the seat must be draining with every slot free. The endpoint can then be registered again. |
 | `POST /v1/admin/seats/{id}/rotate-secret` | admin | Issue a new HMAC secret (shown once); put it in the node's config. |
-| `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`). |
+| `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`); with the dispatcher, `fleet_queue_tasks{priority}`, `fleet_queue_waiting_tasks{priority,reason}`, `fleet_queue_exhausted_tasks`, `fleet_dispatch_launches_total`, `fleet_dispatch_failures_total`. |
 
 Issue a registration token for a seat owner:
 

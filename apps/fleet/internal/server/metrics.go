@@ -16,6 +16,11 @@ type SeatLister interface {
 	ListSeats(ctx context.Context) ([]store.SeatSummary, error)
 }
 
+// DispatchStatser reports dispatcher stats for metrics.
+type DispatchStatser interface {
+	MetricsStats() metrics.DispatchStats
+}
+
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if s.deps.Metrics == nil {
 		http.NotFound(w, r)
@@ -38,6 +43,12 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := metrics.WriteSeats(&buf, seats, s.now()); err != nil {
 		http.Error(w, "metrics unavailable", http.StatusInternalServerError)
 		return
+	}
+	if s.deps.Dispatch != nil {
+		if err := metrics.WriteDispatch(&buf, s.deps.Dispatch.MetricsStats()); err != nil {
+			http.Error(w, "metrics unavailable", http.StatusInternalServerError)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", metrics.ContentType)
 	_, _ = w.Write(buf.Bytes())

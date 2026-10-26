@@ -132,3 +132,40 @@ func (e *encoder) sample(name string, ls labels, value float64) {
 var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
 
 func escapeLabel(v string) string { return labelEscaper.Replace(v) }
+
+// DispatchStats is the dispatcher's view for metrics.
+type DispatchStats struct {
+	Queued    map[string]int
+	Waiting   map[string]map[string]int
+	Exhausted int
+	Launched  int64
+	Failed    int64
+}
+
+// WriteDispatch writes queue and dispatch metrics.
+func WriteDispatch(w io.Writer, s DispatchStats) error {
+	e := &encoder{w: w}
+	e.help("fleet_queue_tasks", "Tasks waiting in the intake step at the last round, by priority.")
+	for _, p := range sortedKeys(s.Queued) {
+		e.sample("fleet_queue_tasks", labels{{"priority", p}}, float64(s.Queued[p]))
+	}
+	e.help("fleet_queue_waiting_tasks", "Tasks the last round could not start, by priority and reason.")
+	for _, p := range sortedKeys(s.Waiting) {
+		for _, r := range sortedKeys(s.Waiting[p]) {
+			e.sample("fleet_queue_waiting_tasks", labels{{"priority", p}, {"reason", r}}, float64(s.Waiting[p][r]))
+		}
+	}
+	e.printf("# HELP fleet_queue_exhausted_tasks Tasks that used up their launch attempts.\n# TYPE fleet_queue_exhausted_tasks gauge\nfleet_queue_exhausted_tasks %d\n", s.Exhausted)
+	e.printf("# HELP fleet_dispatch_launches_total Sessions started since fleetd started.\n# TYPE fleet_dispatch_launches_total counter\nfleet_dispatch_launches_total %d\n", s.Launched)
+	e.printf("# HELP fleet_dispatch_failures_total Failed launch attempts since fleetd started.\n# TYPE fleet_dispatch_failures_total counter\nfleet_dispatch_failures_total %d\n", s.Failed)
+	return e.err
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}

@@ -17,7 +17,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ListenAddr != ":8484" || cfg.DBPath != "fleet.db" || cfg.HeartbeatTimeout != 90*time.Second {
+	if cfg.ListenAddr != ":8484" || cfg.DBPath != "fleet.db" || cfg.HeartbeatTimeout != 90*time.Second || cfg.DispatchInterval != 20*time.Second {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.KandevURL != "" || cfg.KandevToken != "" {
@@ -39,6 +39,7 @@ func TestOverridesAndTrimming(t *testing.T) {
 	want := Config{
 		ListenAddr: "127.0.0.1:9000", DBPath: "/var/lib/fleet/fleet.db",
 		KandevURL: "https://kandev.internal", KandevToken: "kandev_pat_x", HeartbeatTimeout: 2 * time.Minute,
+		DispatchInterval: 20 * time.Second,
 	}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
@@ -54,6 +55,7 @@ func TestRejectsInvalidValues(t *testing.T) {
 		"unparseable url":   {"FLEET_KANDEV_URL": "http://%zz"},
 		"unknown identity":  {"FLEET_SSH_IDENTITY_SOURCE": "password"},
 		"file without path": {"FLEET_SSH_IDENTITY_SOURCE": "file"},
+		"tiny interval":     {"FLEET_DISPATCH_INTERVAL": "10ms"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := fromLookup(lookupFrom(values)); err == nil {

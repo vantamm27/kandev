@@ -30,12 +30,19 @@ type Config struct {
 	AdminToken string
 	// MetricsToken, when set, is required to scrape /metrics.
 	MetricsToken string
+	// WorkspaceID and IntakeStepID select the tasks fleetd dispatches; with
+	// either empty the dispatcher does not run.
+	WorkspaceID  string
+	IntakeStepID string
+	// DispatchInterval is the time between dispatch rounds.
+	DispatchInterval time.Duration
 }
 
 const (
 	defaultListenAddr       = ":8484"
 	defaultDBPath           = "fleet.db"
 	defaultHeartbeatTimeout = 90 * time.Second
+	defaultDispatchInterval = 20 * time.Second
 )
 
 // FromEnv reads the configuration from FLEET_* environment variables.
@@ -60,7 +67,14 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		SSHIdentityFile:   get("FLEET_SSH_IDENTITY_FILE", ""),
 		AdminToken:        get("FLEET_ADMIN_TOKEN", ""),
 		MetricsToken:      get("FLEET_METRICS_TOKEN", ""),
+		WorkspaceID:       get("FLEET_WORKSPACE_ID", ""),
+		IntakeStepID:      get("FLEET_INTAKE_STEP_ID", ""),
 	}
+	interval, err := time.ParseDuration(get("FLEET_DISPATCH_INTERVAL", defaultDispatchInterval.String()))
+	if err != nil || interval < time.Second {
+		return Config{}, fmt.Errorf("FLEET_DISPATCH_INTERVAL must be a duration of at least 1s, got %q", get("FLEET_DISPATCH_INTERVAL", ""))
+	}
+	cfg.DispatchInterval = interval
 	switch cfg.SSHIdentitySource {
 	case "", "agent":
 	case "file":

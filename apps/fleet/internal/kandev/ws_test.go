@@ -21,14 +21,17 @@ type fakeKandevWS struct {
 
 func newFakeKandevWS(t *testing.T, respond func(Message) *Message) (*fakeKandevWS, string) {
 	t.Helper()
-	f := &fakeKandevWS{auth: make(chan string, 1), respond: respond, conns: make(chan *websocket.Conn, 1)}
+	f := &fakeKandevWS{auth: make(chan string, 8), respond: respond, conns: make(chan *websocket.Conn, 8)}
 	upgrader := websocket.Upgrader{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/ws" {
 			http.NotFound(w, r)
 			return
 		}
-		f.auth <- r.Header.Get("Authorization")
+		select { // tests that dial more than once may not read every value
+		case f.auth <- r.Header.Get("Authorization"):
+		default:
+		}
 		ws, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return

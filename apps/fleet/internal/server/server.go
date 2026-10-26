@@ -40,7 +40,9 @@ type Deps struct {
 	Metrics SeatLister
 	// MetricsToken, when set, is required as a bearer token on /metrics.
 	MetricsToken string
-	Log          *slog.Logger
+	// Dispatch adds queue and launch metrics when the dispatcher runs.
+	Dispatch DispatchStatser
+	Log      *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

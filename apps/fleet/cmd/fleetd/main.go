@@ -20,6 +20,7 @@ import (
 
 	"github.com/kandev/kandev/apps/fleet/internal/admin"
 	"github.com/kandev/kandev/apps/fleet/internal/config"
+	"github.com/kandev/kandev/apps/fleet/internal/dispatch"
 	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
 	"github.com/kandev/kandev/apps/fleet/internal/server"
@@ -114,13 +115,19 @@ func serve(cfg config.Config, log *slog.Logger) error {
 
 	client := kandev.NewClient(cfg.KandevURL, cfg.KandevToken)
 	identity := registry.SSHIdentity{Source: cfg.SSHIdentitySource, File: cfg.SSHIdentityFile}
+	deps := server.Deps{
+		DB: db, Registrar: registry.New(db, client, identity, log), Seats: db,
+		Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken,
+		Metrics: db, MetricsToken: cfg.MetricsToken, Log: log,
+	}
+	dispatchDone := startDispatcher(ctx, cfg, db, client, &deps, log)
+	defer func() {
+		stop()
+		<-dispatchDone
+	}()
 	httpServer := &http.Server{
-		Addr: cfg.ListenAddr,
-		Handler: server.New(server.Deps{
-			DB: db, Registrar: registry.New(db, client, identity, log), Seats: db,
-			Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken,
-			Metrics: db, MetricsToken: cfg.MetricsToken, Log: log,
-		}),
+		Addr:              cfg.ListenAddr,
+		Handler:           server.New(deps),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	sweepDone := make(chan struct{})
@@ -150,4 +157,25 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	return httpServer.Shutdown(shutdownCtx)
+}
+
+// startDispatcher runs the dispatcher when a workspace and intake step are
+// configured. The returned channel closes once it has stopped.
+func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, client *kandev.Client, deps *server.Deps, log *slog.Logger) <-chan struct{} {
+	done := make(chan struct{})
+	if cfg.WorkspaceID == "" || cfg.IntakeStepID == "" {
+		log.Warn("dispatcher disabled: set FLEET_WORKSPACE_ID and FLEET_INTAKE_STEP_ID")
+		close(done)
+		return done
+	}
+	launcher := kandev.NewLauncher(cfg.KandevURL, cfg.KandevToken)
+	d := dispatch.New(dispatch.Config{WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID}, db, client, launcher, log)
+	deps.Dispatch = d
+	go func() {
+		defer close(done)
+		defer func() { _ = launcher.Close() }()
+		log.Info("dispatcher running", "workspace_id", cfg.WorkspaceID, "intake_step_id", cfg.IntakeStepID, "interval", cfg.DispatchInterval.String())
+		d.Run(ctx, cfg.DispatchInterval)
+	}()
+	return done
 }

@@ -64,3 +64,28 @@ func TestWriteSeats(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteDispatch(t *testing.T) {
+	var buf bytes.Buffer
+	err := WriteDispatch(&buf, DispatchStats{
+		Queued:    map[string]int{"high": 2, "low": 1},
+		Waiting:   map[string]map[string]int{"low": {"weekly_pacing": 1}, "high": {"quota": 1}},
+		Exhausted: 1, Launched: 7, Failed: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		`fleet_queue_tasks{priority="high"} 2`,
+		`fleet_queue_waiting_tasks{priority="low",reason="weekly_pacing"} 1`,
+		`fleet_queue_waiting_tasks{priority="high",reason="quota"} 1`,
+		"fleet_queue_exhausted_tasks 1",
+		"# TYPE fleet_dispatch_launches_total counter\nfleet_dispatch_launches_total 7",
+		"fleet_dispatch_failures_total 2",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}
