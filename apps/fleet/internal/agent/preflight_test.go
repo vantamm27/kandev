@@ -3,6 +3,10 @@ package agent
 import (
 	"context"
 	"net"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -54,5 +58,43 @@ func TestTCPAndDiskChecks(t *testing.T) {
 	}
 	if r := checkBinary("fleet-no-such-binary")(context.Background()); r.OK {
 		t.Fatal("missing binary must fail")
+	}
+}
+
+func TestSSHEnvCheckUsesTheShellStartupFilesOnly(t *testing.T) {
+	zsh, err := exec.LookPath("zsh")
+	if err != nil {
+		t.Skip("zsh not installed")
+	}
+	home := t.TempDir()
+	bin := filepath.Join(home, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "from-the-parent-process")
+
+	r := checkSSHEnv(home, zsh)(context.Background())
+	if r.OK || !strings.Contains(r.Detail, "claude not found") {
+		t.Fatalf("without startup files = %+v", r)
+	}
+
+	zshenv := filepath.Join(home, ".zshenv")
+	if err := os.WriteFile(zshenv, []byte("export PATH=\""+bin+":$PATH\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = checkSSHEnv(home, zsh)(context.Background())
+	if r.OK || !strings.Contains(r.Detail, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Fatalf("PATH only = %+v", r)
+	}
+
+	if err := os.WriteFile(zshenv, []byte("export PATH=\""+bin+":$PATH\"\nexport CLAUDE_CODE_OAUTH_TOKEN=secret-value\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r = checkSSHEnv(home, zsh)(context.Background())
+	if !r.OK || strings.Contains(r.Detail, "secret-value") {
+		t.Fatalf("PATH and token = %+v", r)
 	}
 }

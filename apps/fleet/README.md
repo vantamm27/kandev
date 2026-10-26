@@ -12,6 +12,25 @@ This is its own Go module so it builds and tests without the backend.
 
 ## Register a seat (on the node, as the seat user)
 
+Kandev runs the agent over non-interactive SSH, where macOS does not let
+Claude Code read the login keychain. The seat owner therefore creates a
+long-lived subscription token in their own session and exports it, with the
+Homebrew `PATH`, from the shell startup file that SSH sessions read:
+
+```sh
+claude setup-token        # prints the token; keep it out of shared terminals
+umask 077
+cat >> ~/.zshenv <<'EOF'
+export PATH="/opt/homebrew/bin:$PATH"
+export CLAUDE_CODE_OAUTH_TOKEN="<token>"
+EOF
+fleet-agent preflight     # the ssh-env check confirms both
+```
+
+Kandev's SSH key must also be in the seat user's `~/.ssh/authorized_keys`,
+preferably restricted with `from="<kandev host>"`.
+
+
 ```sh
 FLEET_REGISTRATION_TOKEN=fleet_reg_... fleet-agent register \
   --fleetd http://fleetd.internal:8484 --ssh-host 10.0.0.5 \

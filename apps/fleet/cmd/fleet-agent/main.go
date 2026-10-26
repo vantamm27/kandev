@@ -189,7 +189,11 @@ func preflight(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	results, ok := agent.RunChecks(context.Background(), agent.DefaultChecks(home, *sshPort))
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/zsh"
+	}
+	results, ok := agent.RunChecks(context.Background(), agent.DefaultChecks(home, shell, *sshPort))
 	for _, r := range results {
 		mark := "FAIL"
 		switch {

@@ -30,10 +30,12 @@ type Check struct {
 // MinFreeDiskBytes is the free space a seat needs for worktrees and builds.
 const MinFreeDiskBytes = 20 << 30
 
-// DefaultChecks are the checks `fleet-agent preflight` runs on a node.
-func DefaultChecks(home string, sshPort int) []Check {
+// DefaultChecks are the checks `fleet-agent preflight` runs on a node. shell
+// is the seat user's login shell, which sshd uses for Kandev's commands.
+func DefaultChecks(home, shell string, sshPort int) []Check {
 	return []Check{
 		{Name: "claude", Run: checkBinary("claude")},
+		{Name: "ssh-env", Run: checkSSHEnv(home, shell)},
 		{Name: "git", Run: checkBinary("git")},
 		{Name: "sshd", Run: checkTCP(fmt.Sprintf("127.0.0.1:%d", sshPort))},
 		{Name: "disk", Run: checkDisk(home, MinFreeDiskBytes)},
@@ -63,6 +65,35 @@ func checkBinary(name string) func(context.Context) CheckResult {
 			return CheckResult{Detail: name + " not found in PATH"}
 		}
 		return CheckResult{OK: true, Detail: path}
+	}
+}
+
+// sshDefaultPath is the PATH sshd gives a non-interactive macOS session.
+const sshDefaultPath = "/usr/bin:/bin:/usr/sbin:/sbin"
+
+// sshEnvScript reports the first missing piece of a usable SSH session. The
+// login keychain cannot be read over SSH, so the subscription login must come
+// from a `claude setup-token` token exported by the shell startup files.
+const sshEnvScript = `command -v claude >/dev/null 2>&1 || { echo "claude not found in the SSH session PATH; extend PATH in the shell startup file"; exit 1; }
+[ -n "$CLAUDE_CODE_OAUTH_TOKEN" ] || { echo "CLAUDE_CODE_OAUTH_TOKEN is not set in SSH sessions; run claude setup-token and export it from the shell startup file"; exit 1; }
+command -v claude`
+
+// checkSSHEnv runs the login shell the way sshd runs a remote command, with
+// only the variables sshd sets, so the parent environment cannot hide a gap.
+func checkSSHEnv(home, shell string) func(context.Context) CheckResult {
+	return func(ctx context.Context) CheckResult {
+		cmd := exec.CommandContext(ctx, shell, "-c", sshEnvScript)
+		cmd.Dir = home
+		cmd.Env = []string{"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath}
+		out, err := cmd.Output()
+		detail := strings.TrimSpace(string(out))
+		if err != nil {
+			if detail == "" {
+				detail = shell + ": " + err.Error()
+			}
+			return CheckResult{Detail: detail}
+		}
+		return CheckResult{OK: true, Detail: "claude at " + detail + ", subscription token set"}
 	}
 }
 
