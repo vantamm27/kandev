@@ -22,6 +22,10 @@ type Config struct {
 	KandevToken string
 	// HeartbeatTimeout marks a seat offline after this long without a heartbeat.
 	HeartbeatTimeout time.Duration
+	// SSHIdentitySource is how Kandev authenticates to seats: "agent" or "file".
+	SSHIdentitySource string
+	// SSHIdentityFile is the key path on the Kandev host for source "file".
+	SSHIdentityFile string
 }
 
 const (
@@ -47,6 +51,18 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		DBPath:      get("FLEET_DB_PATH", defaultDBPath),
 		KandevURL:   strings.TrimRight(get("FLEET_KANDEV_URL", ""), "/"),
 		KandevToken: get("FLEET_KANDEV_TOKEN", ""),
+
+		SSHIdentitySource: get("FLEET_SSH_IDENTITY_SOURCE", ""),
+		SSHIdentityFile:   get("FLEET_SSH_IDENTITY_FILE", ""),
+	}
+	switch cfg.SSHIdentitySource {
+	case "", "agent":
+	case "file":
+		if cfg.SSHIdentityFile == "" {
+			return Config{}, errors.New("FLEET_SSH_IDENTITY_FILE is required when FLEET_SSH_IDENTITY_SOURCE=file")
+		}
+	default:
+		return Config{}, fmt.Errorf("FLEET_SSH_IDENTITY_SOURCE must be agent or file, got %q", cfg.SSHIdentitySource)
 	}
 	timeout, err := time.ParseDuration(get("FLEET_HEARTBEAT_TIMEOUT", defaultHeartbeatTimeout.String()))
 	if err != nil {

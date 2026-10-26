@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/kandev/kandev/apps/fleet/internal/registry"
 )
 
 // Pinger reports whether a dependency is healthy.
@@ -14,19 +16,34 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-// Server routes fleetd HTTP requests.
-type Server struct {
-	db  Pinger
-	log *slog.Logger
-	mux *http.ServeMux
+// Registrar registers seats.
+type Registrar interface {
+	Register(ctx context.Context, req registry.Request) (registry.Result, error)
 }
 
-const healthCheckTimeout = 2 * time.Second
+// Deps are the server's collaborators.
+type Deps struct {
+	DB        Pinger
+	Registrar Registrar
+	Log       *slog.Logger
+}
+
+// Server routes fleetd HTTP requests.
+type Server struct {
+	deps Deps
+	mux  *http.ServeMux
+}
+
+const (
+	healthCheckTimeout = 2 * time.Second
+	maxRequestBody     = 64 << 10
+)
 
 // New builds the HTTP handler.
-func New(db Pinger, log *slog.Logger) *Server {
-	s := &Server{db: db, log: log, mux: http.NewServeMux()}
+func New(deps Deps) *Server {
+	s := &Server{deps: deps, mux: http.NewServeMux()}
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
 	return s
 }
 
@@ -36,8 +53,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.Serve
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), healthCheckTimeout)
 	defer cancel()
-	if err := s.db.Ping(ctx); err != nil {
-		s.log.Warn("health check failed", "error", err)
+	if err := s.deps.DB.Ping(ctx); err != nil {
+		s.deps.Log.Warn("health check failed", "error", err)
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
 		return
 	}
@@ -46,6 +63,22 @@ func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, out any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(out); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return false
+	}
+	return true
 }

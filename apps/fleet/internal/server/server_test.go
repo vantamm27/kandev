@@ -33,7 +33,7 @@ func TestHealthz(t *testing.T) {
 		"db unusable": {err: errors.New("disk gone"), status: http.StatusServiceUnavailable, body: `{"status":"unavailable"}`},
 	} {
 		t.Run(name, func(t *testing.T) {
-			rec := get(t, New(fakePinger{err: tc.err}, log), http.MethodGet, "/healthz")
+			rec := get(t, New(Deps{DB: fakePinger{err: tc.err}, Log: log}), http.MethodGet, "/healthz")
 			if rec.Code != tc.status || strings.TrimSpace(rec.Body.String()) != tc.body {
 				t.Fatalf("got %d %q, want %d %q", rec.Code, rec.Body.String(), tc.status, tc.body)
 			}
@@ -46,7 +46,7 @@ func TestHealthz(t *testing.T) {
 
 func TestHealthzRejectsOtherMethods(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if rec := get(t, New(fakePinger{}, log), http.MethodPost, "/healthz"); rec.Code != http.StatusMethodNotAllowed {
+	if rec := get(t, New(Deps{DB: fakePinger{}, Log: log}), http.MethodPost, "/healthz"); rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("POST /healthz = %d, want 405", rec.Code)
 	}
 }

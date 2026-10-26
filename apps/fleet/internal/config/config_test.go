@@ -47,16 +47,27 @@ func TestOverridesAndTrimming(t *testing.T) {
 
 func TestRejectsInvalidValues(t *testing.T) {
 	for name, values := range map[string]map[string]string{
-		"bad duration":     {"FLEET_HEARTBEAT_TIMEOUT": "soon"},
-		"zero duration":    {"FLEET_HEARTBEAT_TIMEOUT": "0s"},
-		"non-http url":     {"FLEET_KANDEV_URL": "ftp://kandev"},
-		"url without host": {"FLEET_KANDEV_URL": "http://"},
-		"unparseable url":  {"FLEET_KANDEV_URL": "http://%zz"},
+		"bad duration":      {"FLEET_HEARTBEAT_TIMEOUT": "soon"},
+		"zero duration":     {"FLEET_HEARTBEAT_TIMEOUT": "0s"},
+		"non-http url":      {"FLEET_KANDEV_URL": "ftp://kandev"},
+		"url without host":  {"FLEET_KANDEV_URL": "http://"},
+		"unparseable url":   {"FLEET_KANDEV_URL": "http://%zz"},
+		"unknown identity":  {"FLEET_SSH_IDENTITY_SOURCE": "password"},
+		"file without path": {"FLEET_SSH_IDENTITY_SOURCE": "file"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := fromLookup(lookupFrom(values)); err == nil {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+func TestSSHIdentityFile(t *testing.T) {
+	cfg, err := fromLookup(lookupFrom(map[string]string{
+		"FLEET_SSH_IDENTITY_SOURCE": "file", "FLEET_SSH_IDENTITY_FILE": "/etc/kandev/fleet_ed25519",
+	}))
+	if err != nil || cfg.SSHIdentitySource != "file" || cfg.SSHIdentityFile != "/etc/kandev/fleet_ed25519" {
+		t.Fatalf("cfg = %+v, err = %v", cfg, err)
 	}
 }
