@@ -34,7 +34,7 @@ Visual version of this plan (Vietnamese, with diagrams):
 | D2 | 1 seat = 1 owner = 1 macOS user. One Mac mini hosts 2-4 seats. | Keeps the "owner logs in to their own seat" rule while cutting hardware about 3x. |
 | D3 | Each seat is one fixed Kandev SSH executor for its lifetime. Never remap a slot to another host. | Kandev pins `ssh_host_fingerprint` per executor and task environments remember the host for resume. Remapping breaks host-key checks and resume. |
 | D4 | No central collection of seat OAuth tokens and no proxy in front of Anthropic. | Claude Code terms forbid brokering login tokens. Each owner logs in on the node. |
-| D5 | Fleet is a Kandev plugin (`kandev-fleet`) plus a small `fleet-agent` binary on each node. Core changes are small, tested, and upstreamable. | Upstream moves fast; plugins already get events, execution API, KV, webhooks, actions, and UI routes. |
+| D5 | Fleet is a standalone Go service (`apps/fleet`, its own Go module) plus a `fleet-agent` binary on each node. It talks to Kandev through REST/WS with a service-user PAT. A Kandev plugin is added later for UI only. Core changes stay small and upstreamable. | Revised 2026-10-26 after reading `pkg/pluginsdk`: plugins have no Host API to create or edit executors, are told not to call undocumented REST, and Host v2 `EnsureTaskRun` cannot choose an executor for an existing task. A separate module also never conflicts with backend rebases. |
 | D6 | Limit handling, layer 1: one Kandev dynamic agent profile per owner. Candidates are only that owner's accounts. `quota_limited` policy waits for a trusted reset up to 120 minutes, then moves to the next candidate or stops. | Kandev already classifies Claude session/weekly limits and supports reset waits. |
 | D7 | Limit handling, layer 2: hand the task to another member only after that member clicks "Take task". No automatic cross-seat assignment until Anthropic confirms pooling in writing. | Policy boundary on seat pooling. |
 | D8 | Handoff goal is a Done task, not session preservation. Try in order: resume the same task on the new executor, then a continuation task from `agent-wip/<task>`, then a fresh run from `main`. Max 3 handoffs per task. | Simplest path that always finishes. |
@@ -52,9 +52,9 @@ Dev laptop (Claude Code, /delegate) --MCP--> agentgateway --> Kandev /mcp
 Kandev UI ------------------------------------------------> Kandev (fork, Postgres)
                                                             |  events / session.launch
                                                             v
-                                               kandev-fleet plugin
+                                               fleet service (apps/fleet, Go, SQLite)
                                                (registry, quota tracker, dispatcher,
-                                                handoff policy, Fleet UI)
+                                                handoff policy, /metrics; UI plugin later)
                                                             ^ heartbeat (HMAC)
 Mac mini N: macOS user seat-x (owner X) -- fleet-agent, Claude Code, worktrees
             Kandev --SSH (cert, pinned host key)--> seat-x
@@ -155,8 +155,9 @@ The task-level backlog with status lives in [backlog.md](./backlog.md).
 - Quota visibility: without a reliable remaining-quota signal, the quota gate
   only reacts after a limit is hit.
 - Fork drift: rebase weekly, keep core patches small, upstream C1/C2/C4 early.
-- Plugin limits: if KV/webhooks are not enough, split the plugin into a
-  standalone service behind the same fleet-agent API.
+- Fleet service reach into Kandev: it uses REST (`/executors`, `/tasks`) and WS
+  (`session.launch`, `task.subscribe`) with a PAT. These are stable but not a
+  versioned plugin contract; pin them with the fleet service's client tests.
 - Mac mini reboots: FileVault and macOS updates stall nodes at the login
   screen. Needs MDM, `fdesetup authrestart`, and an offline alert.
 - Owner laptop usage shares the seat quota with the node; pacing must sum both.

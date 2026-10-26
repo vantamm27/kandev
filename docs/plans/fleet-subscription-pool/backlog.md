@@ -42,29 +42,34 @@ can resume from this file alone.
 
 ## Phase 2: Registry and fleet-agent
 
+Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
+`cmd/fleetd` (service), `cmd/fleet-agent` (node), `internal/...` packages.
+
 | ID | Kind | Item | Status | Notes |
 | --- | --- | --- | --- | --- |
-| P2-01 | plugin | Scaffold `kandev-fleet` plugin (manifest, register in `plugin-registry/plugins.yaml`). | todo | Follow `docs/public/plugins-authoring.md`. |
-| P2-02 | plugin | Registry action `register`: one-time token, host key from node, create executor (`ssh_*`, `ssh_host_fingerprint`) and profile, return per-seat HMAC secret. | todo | Executor never moves to another host (D3). |
-| P2-03 | plugin | Heartbeat webhook (HMAC, 30 s): state, 5 h/weekly quota, reset time, free slots, agent version. | todo | |
-| P2-04 | plugin | Fleet UI (read-only first): seats, state, quota, running tasks. | todo | |
-| P2-05 | agent | `fleet-agent register --token --seat --labels`; installs a LaunchAgent for the seat's macOS user; preflight checks. | todo | |
-| P2-06 | agent | `fleet-agent checkpoint`: commit and push the worktree to `refs/agent-wip/<task>` without the model. | todo | Used when quota is exhausted. |
-| P2-07 | infra | Ansible/MDM recipe for Mac mini: users per seat, sshd, sleep off, FileVault policy. | todo | |
-| P2-08 | infra | SSH CA (short-lived user certs, host certs) for Kandev -> node. | todo | |
-| P2-09 | plugin | Drain / retire / rotate-token actions. | todo | |
+| F1 | agent | Scaffold `apps/fleet`: go.mod, `cmd/fleetd` with config (env), HTTP server with `/healthz`, SQLite store with migrations (`seats`, `registration_tokens`, `dispatch_claims`, `handoffs`), Makefile target, README. | todo | |
+| F2 | agent | Kandev client package: REST (create/patch/delete executor + profile, list/get tasks, update task assignee) and WS (`session.launch`, `task.subscribe`) with PAT auth; httptest-based client tests that pin request shapes. | todo | Shapes from `internal/task/handlers/executor_handlers.go`, `executor_profile_handlers.go`, `orchestrator/session_launch.go`. |
+| F3 | agent | Registration: admin CLI `fleetd token create --owner <user> --ttl` (one-time, hashed at rest); `POST /v1/register` consumes it, records seat (owner, ssh host/port/user, host key fingerprint, labels, capacity), creates the Kandev SSH executor + profile, returns a per-seat HMAC secret. Executor never repointed (D3). | todo | |
+| F4 | agent | Heartbeat: `POST /v1/heartbeat` (HMAC + timestamp window), payload = state, quota 5h/weekly %, reset times, free slots, agent version. Seat state machine (registering, online, busy, cooldown_5h, cooldown_week, draining, offline, retired) with an offline sweeper (3 missed beats). | todo | |
+| F5 | agent | `fleet-agent` binary: `register` (writes config + LaunchAgent plist for the seat's macOS user), `run` (heartbeat loop), `preflight` (claude login, sshd, disk, sleep off), `checkpoint <worktree>` (commit + push `refs/agent-wip/<task>` without the model). | todo | Covers old P2-05, P2-06. Quota numbers come from S2; until then report unknown. |
+| F6 | agent | Admin endpoints: list seats, drain, retire (deletes Kandev executor after drain), rotate seat secret. | todo | Covers old P2-09. |
+| F7 | agent | `/metrics` (Prometheus text): seats by state, quota %, queue depth by priority, dispatch wait histogram, handoffs by path. | todo | Feeds Grafana (P1-03). |
+| P2-07 | infra | Ansible/MDM recipe for Mac mini: users per seat, sshd, sleep off, FileVault policy. | todo | Needs real Mac mini access. |
+| P2-08 | infra | SSH CA (short-lived user certs, host certs) for Kandev -> node. | todo | Needs infra decision (Vault vs step-ca). |
 
 ## Phase 3: Quota-aware dispatcher and handoff
 
 | ID | Kind | Item | Status | Notes |
 | --- | --- | --- | --- | --- |
-| C3 | core | Expose `quota_limited` code and `reset_at` to plugins (event payload or API). | todo | Classification already exists in `routingerr`. |
+| F8 | agent | Pure scheduling package: effective priority (base + capped aging), per-owner fair share, quota gate (`remaining < est_cost` excludes), weekly pacing, head-of-line backfill. Table-driven tests only, no I/O. | todo | Plan D10. |
+| F9 | agent | Dispatcher loop: reconcile every 15-30 s plus `task.subscribe` events; candidate tasks = start_agent=false in the configured intake step with an assignee; claim in store (idempotent), launch via `session.launch` on the owner's seat executor profile; retry budget; audit log. | todo | Covers old P3-01, P3-02. |
+| C3 | core | Expose `quota_limited` code and `reset_at` on the session state event (or a REST read) so fleetd can move a seat to cooldown. | todo | Classification exists in `routingerr`; find where the session failure reason is persisted. |
+| F10 | agent | Limit handling: on `quota_limited` mark seat cooldown with reset time; requeue the task per D6 (dynamic profile handles short waits) or offer handoff. | todo | Depends on C3. |
+| F11 | agent | Handoff (layer 2): offer list (online seats with quota, same team), `POST /v1/handoffs/:id/accept` by member B, set assignee, launch chain resume -> continuation task from `agent-wip/<task>` -> fresh run, max 3, record `handoff_path`. | todo | Plan D7, D8. Covers old P3-03. |
+| F12 | agent | Proactive checkpoint at >= 85 % quota: send `message.add` asking the agent to update PROGRESS.md and push WIP. | todo | Covers old P3-05. |
+| P3-04 | infra | Claude Code hooks (`Stop`, `PostToolUse`) auto-commit WIP; shared checkpoint prompt template (template text can live in `apps/fleet/templates`). | todo | Hook install is per node (managed settings). |
 | C5 | core | Allow the fleet service account to dispatch on seat executors, if S4 shows it is blocked. | blocked | Waits on P0-08. |
-| P3-01 | plugin | Dispatcher: owner match, priority + capped aging, quota gate, weekly pacing, launch via `session.launch`. | todo | Plan D10. |
-| P3-02 | plugin | Retry budget, failed inbox, audit log. | todo | |
-| P3-03 | plugin | Layer-2 handoff: banner, member suggestions, "Take task" action, launch on member's executor, chain resume -> continuation task -> fresh run, max 3 handoffs, record `handoff_path`. | todo | Plan D7, D8. |
-| P3-04 | infra | Claude Code hooks (`Stop`, `PostToolUse`) auto-commit WIP; shared checkpoint prompt template. | todo | Plan D9. |
-| P3-05 | plugin | Proactive checkpoint at >= 85% quota via `message_task_kandev`. | todo | |
+| U1 | plugin | Fleet UI plugin: seats page, queue, handoff banner + "Take task" calling fleetd through an authenticated plugin webhook. | todo | After F6/F11. |
 
 ## Phase 4: Optimization and scale-out
 
@@ -95,3 +100,5 @@ can resume from this file alone.
   scratchpad, pushed to the same `feature/fleet` branch; `git pull` the original
   checkout once access returns. C6 done.
 - 2026-10-26: C4 done (usage-breakdown endpoint).
+- 2026-10-26: D5 revised (standalone fleet service instead of plugin, see plan).
+  Phase 2-3 broken down into F1-F12 and U1.
