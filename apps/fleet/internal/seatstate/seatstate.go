@@ -2,10 +2,20 @@
 // pure so every transition is table-tested.
 package seatstate
 
-import (
-	"time"
+import "time"
 
-	"github.com/kandev/kandev/apps/fleet/internal/store"
+// Seat states. A seat is one subscription account on one node user. The
+// store persists these values; they live here so the node agent does not
+// link the store's SQLite driver.
+const (
+	Registering  = "registering"
+	Online       = "online"
+	Busy         = "busy"
+	Cooldown5h   = "cooldown_5h"
+	CooldownWeek = "cooldown_week"
+	Draining     = "draining"
+	Offline      = "offline"
+	Retired      = "retired"
 )
 
 // Limit values a node reports when its seat hits a usage limit.
@@ -46,17 +56,17 @@ func pctInRange(p *float64) bool { return p == nil || (*p >= 0 && *p <= 100) }
 // no free slot is busy.
 func Next(current string, hb Heartbeat) string {
 	switch current {
-	case store.SeatDraining, store.SeatRetired:
+	case Draining, Retired:
 		return current
 	}
 	switch {
 	case hb.Limit == LimitWeek:
-		return store.SeatCooldownWeek
+		return CooldownWeek
 	case hb.Limit == Limit5h:
-		return store.SeatCooldown5h
+		return Cooldown5h
 	case hb.FreeSlots == 0:
-		return store.SeatBusy
+		return Busy
 	default:
-		return store.SeatOnline
+		return Online
 	}
 }

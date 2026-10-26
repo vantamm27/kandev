@@ -2,8 +2,6 @@ package seatstate
 
 import (
 	"testing"
-
-	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
 func TestNext(t *testing.T) {
@@ -12,16 +10,16 @@ func TestNext(t *testing.T) {
 		hb      Heartbeat
 		want    string
 	}{
-		"free slot":               {store.SeatOnline, Heartbeat{FreeSlots: 1}, store.SeatOnline},
-		"no free slot":            {store.SeatOnline, Heartbeat{FreeSlots: 0}, store.SeatBusy},
-		"5h limit":                {store.SeatBusy, Heartbeat{Limit: Limit5h, FreeSlots: 1}, store.SeatCooldown5h},
-		"weekly beats 5h":         {store.SeatCooldown5h, Heartbeat{Limit: LimitWeek}, store.SeatCooldownWeek},
-		"limit cleared":           {store.SeatCooldown5h, Heartbeat{FreeSlots: 2}, store.SeatOnline},
-		"offline comes back":      {store.SeatOffline, Heartbeat{FreeSlots: 1}, store.SeatOnline},
-		"registering goes online": {store.SeatRegistering, Heartbeat{FreeSlots: 1}, store.SeatOnline},
-		"draining is kept":        {store.SeatDraining, Heartbeat{FreeSlots: 1}, store.SeatDraining},
-		"draining keeps on limit": {store.SeatDraining, Heartbeat{Limit: LimitWeek}, store.SeatDraining},
-		"retired is kept":         {store.SeatRetired, Heartbeat{FreeSlots: 1}, store.SeatRetired},
+		"free slot":               {Online, Heartbeat{FreeSlots: 1}, Online},
+		"no free slot":            {Online, Heartbeat{FreeSlots: 0}, Busy},
+		"5h limit":                {Busy, Heartbeat{Limit: Limit5h, FreeSlots: 1}, Cooldown5h},
+		"weekly beats 5h":         {Cooldown5h, Heartbeat{Limit: LimitWeek}, CooldownWeek},
+		"limit cleared":           {Cooldown5h, Heartbeat{FreeSlots: 2}, Online},
+		"offline comes back":      {Offline, Heartbeat{FreeSlots: 1}, Online},
+		"registering goes online": {Registering, Heartbeat{FreeSlots: 1}, Online},
+		"draining is kept":        {Draining, Heartbeat{FreeSlots: 1}, Draining},
+		"draining keeps on limit": {Draining, Heartbeat{Limit: LimitWeek}, Draining},
+		"retired is kept":         {Retired, Heartbeat{FreeSlots: 1}, Retired},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := Next(tc.current, tc.hb); got != tc.want {

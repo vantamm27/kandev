@@ -65,13 +65,14 @@ func register(args []string, stdout io.Writer) error {
 	token := fs.String("token", "", "one-time registration token (required); prefer FLEET_REGISTRATION_TOKEN")
 	sshHost := fs.String("ssh-host", "", "address Kandev uses to reach this node (required)")
 	sshPort := fs.Int("ssh-port", 22, "sshd port")
-	sshUser := fs.String("ssh-user", "", "this seat's macOS user (default: current user)")
+	sshUser := fs.String("ssh-user", "", "this seat's OS user (default: current user)")
 	hostKey := fs.String("host-key", agent.DefaultHostKeyFile, "sshd host public key file")
 	labels := fs.String("labels", "", "comma-separated node labels, for example macos,xcode")
 	capacity := fs.Int("capacity", 1, "concurrent tasks for this seat")
 	configPath := fs.String("config", defaultConfig, "where to save the registration")
 	quotaFile := fs.String("quota-file", "", "quota report file written by a Claude Code hook (default: next to the config)")
-	launchAgent := fs.String("launch-agent", "", "also write a LaunchAgent plist to this path")
+	launchAgent := fs.String("launch-agent", "", "also write a macOS LaunchAgent plist to this path")
+	systemdUnit := fs.String("systemd-unit", "", "also write a Linux systemd user unit to this path")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -114,9 +115,34 @@ func register(args []string, stdout io.Writer) error {
 		return err
 	}
 	if *launchAgent != "" {
-		return writeLaunchAgent(*launchAgent, *configPath, stdout)
+		if err := writeLaunchAgent(*launchAgent, *configPath, stdout); err != nil {
+			return err
+		}
+	}
+	if *systemdUnit != "" {
+		return writeSystemdUnit(*systemdUnit, *configPath, stdout)
 	}
 	return nil
+}
+
+func writeSystemdUnit(path, configPath string, stdout io.Writer) error {
+	binary, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	unit, err := agent.SystemdUnit(binary, configPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(path, unit, 0o644); err != nil {
+		return fmt.Errorf("write systemd unit: %w", err)
+	}
+	_, err = fmt.Fprintf(stdout, "systemd unit: %s\nstart it with: systemctl --user daemon-reload && systemctl --user enable --now %s\n"+
+		"keep it running without a login session: sudo loginctl enable-linger $USER\n", path, agent.SystemdUnitName)
+	return err
 }
 
 func writeLaunchAgent(path, configPath string, stdout io.Writer) error {

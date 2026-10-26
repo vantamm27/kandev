@@ -30,6 +30,11 @@ fleet-agent preflight     # the ssh-env check confirms both
 Kandev's SSH key must also be in the seat user's `~/.ssh/authorized_keys`,
 preferably restricted with `from="<kandev host>"`.
 
+On a Linux seat Claude Code keeps its login in a file, so the keychain step
+does not apply; use `--systemd-unit ~/.config/systemd/user/fleet-agent.service`
+instead of `--launch-agent`, and `sudo loginctl enable-linger <user>` so the
+unit runs without a login session.
+
 
 ```sh
 FLEET_REGISTRATION_TOKEN=fleet_reg_... fleet-agent register \

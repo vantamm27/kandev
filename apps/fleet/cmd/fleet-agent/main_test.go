@@ -35,10 +35,11 @@ func TestRegisterSavesConfigAndLaunchAgent(t *testing.T) {
 	t.Setenv("FLEET_REGISTRATION_TOKEN", "tok-env")
 	configPath := filepath.Join(dir, "cfg", "config.json")
 	plistPath := filepath.Join(dir, "LaunchAgents", "com.kandev.fleet-agent.plist")
+	unitPath := filepath.Join(dir, "systemd", "user", "fleet-agent.service")
 	var out bytes.Buffer
 	err = run([]string{"register", "--fleetd", srv.URL, "--ssh-host", "10.0.0.5", "--ssh-user", "seat-a",
 		"--host-key", key + ".pub", "--labels", "macos, xcode", "--capacity", "2",
-		"--config", configPath, "--launch-agent", plistPath}, &out)
+		"--config", configPath, "--launch-agent", plistPath, "--systemd-unit", unitPath}, &out)
 	if err != nil {
 		t.Fatalf("register: %v", err)
 	}
@@ -53,6 +54,13 @@ func TestRegisterSavesConfigAndLaunchAgent(t *testing.T) {
 	}
 	if _, err := os.Stat(plistPath); err != nil {
 		t.Fatalf("plist not written: %v", err)
+	}
+	unit, err := os.ReadFile(unitPath)
+	if err != nil || !strings.Contains(string(unit), `"run" "--config" "`+configPath+`"`) {
+		t.Fatalf("systemd unit = %s, %v", unit, err)
+	}
+	if !strings.Contains(out.String(), "systemctl --user enable --now fleet-agent.service") {
+		t.Fatalf("output lacks systemd start hint: %s", out.String())
 	}
 	if strings.Contains(out.String(), "s3cret") {
 		t.Fatal("the HMAC secret must never be printed")

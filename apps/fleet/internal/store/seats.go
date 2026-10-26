@@ -9,18 +9,20 @@ import (
 	"time"
 
 	"github.com/mattn/go-sqlite3"
+
+	"github.com/kandev/kandev/apps/fleet/internal/seatstate"
 )
 
-// Seat states. A seat is one subscription account on one node user.
+// Seat states, defined by seatstate.
 const (
-	SeatRegistering  = "registering"
-	SeatOnline       = "online"
-	SeatBusy         = "busy"
-	SeatCooldown5h   = "cooldown_5h"
-	SeatCooldownWeek = "cooldown_week"
-	SeatDraining     = "draining"
-	SeatOffline      = "offline"
-	SeatRetired      = "retired"
+	SeatRegistering  = seatstate.Registering
+	SeatOnline       = seatstate.Online
+	SeatBusy         = seatstate.Busy
+	SeatCooldown5h   = seatstate.Cooldown5h
+	SeatCooldownWeek = seatstate.CooldownWeek
+	SeatDraining     = seatstate.Draining
+	SeatOffline      = seatstate.Offline
+	SeatRetired      = seatstate.Retired
 )
 
 // ErrSeatExists means a live seat already uses the same SSH host, port, and user.
