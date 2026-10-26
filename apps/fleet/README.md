@@ -64,6 +64,44 @@ seat's last accepted one, so a captured request cannot be replayed. Seats
 silent for `FLEET_HEARTBEAT_TIMEOUT` go offline; draining and retired seats
 keep their state.
 
+## Run the agent
+
+```sh
+fleet-agent preflight            # claude, git, sshd, 20 GiB free disk, sleep disabled (macOS)
+fleet-agent run                  # heartbeat every 30s until SIGTERM (the LaunchAgent runs this)
+fleet-agent checkpoint --worktree <dir> --task <kandev-task-id>
+```
+
+`checkpoint` commits uncommitted work (hooks still run) and force-pushes HEAD to
+`refs/agent-wip/<task>` with the `ci.skip` push option. It runs no model, so it
+works while the seat is at its usage limit. Pass `--no-ci-skip` for a remote
+that does not accept push options.
+
+Free slots are capacity minus this user's `agentctl` processes (one per Kandev
+session).
+
+### Quota file
+
+fleet-agent does not read Claude Code's quota itself. A Claude Code hook or
+statusline script writes `~/.config/fleet-agent/quota.json` (path in the
+config as `quota_file`), and every heartbeat reports it:
+
+```json
+{
+  "limit": "5h",
+  "quota_5h_pct": 100,
+  "quota_week_pct": 63.5,
+  "reset_5h_at": "2026-10-26T14:00:00Z",
+  "updated_at": "2026-10-26T11:58:00Z"
+}
+```
+
+`limit` is `""`, `"5h"`, or `"week"`. A limit holds until its reset time, or
+for 15 minutes after `updated_at` when no reset time is known (the weekly
+notice has no date). Percentages older than 15 minutes are dropped. With no
+file, the seat reports no limit. Which source fills this file reliably is
+spike S2 in the backlog.
+
 ## Test
 
 ```sh

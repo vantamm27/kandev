@@ -1,6 +1,9 @@
 // Command fleet-agent runs on a node as the seat's macOS user.
 //
 //	fleet-agent register --fleetd URL --token TOKEN --ssh-host HOST [flags]
+//	fleet-agent run [--config PATH] [--interval 30s]
+//	fleet-agent preflight [--ssh-port 22]
+//	fleet-agent checkpoint --worktree DIR --task ID [--remote origin] [--no-ci-skip]
 package main
 
 import (
@@ -9,10 +12,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
+	"os/signal"
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kandev/kandev/apps/fleet/internal/agent"
@@ -30,11 +36,17 @@ func main() {
 
 func run(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: fleet-agent register|version [flags]")
+		return errors.New("usage: fleet-agent register|run|preflight|checkpoint|version [flags]")
 	}
 	switch args[0] {
 	case "register":
 		return register(args[1:], stdout)
+	case "run":
+		return runReporter(args[1:])
+	case "preflight":
+		return preflight(args[1:], stdout)
+	case "checkpoint":
+		return checkpoint(args[1:], stdout)
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)
 		return err
@@ -135,4 +147,85 @@ func splitList(raw string) []string {
 		}
 	}
 	return out
+}
+
+func runReporter(args []string) error {
+	defaultConfig, err := agent.DefaultConfigPath()
+	if err != nil {
+		return err
+	}
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	configPath := fs.String("config", defaultConfig, "saved registration")
+	interval := fs.Duration("interval", agent.HeartbeatInterval, "heartbeat interval")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *interval < time.Second {
+		return errors.New("--interval must be at least 1s")
+	}
+	cfg, err := agent.LoadConfig(*configPath)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	reporter := &agent.Reporter{
+		Config: cfg, Version: version, HTTP: agent.NewHTTPClient(),
+		Slots: agent.ProcessSlotCounter{UID: os.Getuid()},
+		Log:   slog.New(slog.NewJSONHandler(os.Stderr, nil)), Now: time.Now,
+	}
+	reporter.Log.Info("fleet-agent running", "seat_id", cfg.SeatID, "fleetd", cfg.FleetdURL, "version", version)
+	reporter.Run(ctx, *interval)
+	return nil
+}
+
+func preflight(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("preflight", flag.ContinueOnError)
+	sshPort := fs.Int("ssh-port", 22, "sshd port")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	results, ok := agent.RunChecks(context.Background(), agent.DefaultChecks(home, *sshPort))
+	for _, r := range results {
+		mark := "FAIL"
+		switch {
+		case r.Skipped:
+			mark = "SKIP"
+		case r.OK:
+			mark = "ok"
+		}
+		if _, err := fmt.Fprintf(stdout, "%-4s %-7s %s\n", mark, r.Name, r.Detail); err != nil {
+			return err
+		}
+	}
+	if !ok {
+		return errors.New("preflight failed")
+	}
+	return nil
+}
+
+func checkpoint(args []string, stdout io.Writer) error {
+	fs := flag.NewFlagSet("checkpoint", flag.ContinueOnError)
+	worktree := fs.String("worktree", "", "task worktree (required)")
+	task := fs.String("task", "", "Kandev task ID (required)")
+	remote := fs.String("remote", "origin", "git remote")
+	noCISkip := fs.Bool("no-ci-skip", false, "do not send the ci.skip push option")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *worktree == "" || *task == "" {
+		return errors.New("--worktree and --task are required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	res, err := agent.Checkpoint(ctx, agent.CheckpointOptions{Worktree: *worktree, TaskID: *task, Remote: *remote, SkipCI: !*noCISkip})
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "pushed %s to %s (new commit: %v)\n", res.Commit, res.Ref, res.Committed)
+	return err
 }
