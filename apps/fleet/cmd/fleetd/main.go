@@ -21,6 +21,7 @@ import (
 	"github.com/kandev/kandev/apps/fleet/internal/admin"
 	"github.com/kandev/kandev/apps/fleet/internal/config"
 	"github.com/kandev/kandev/apps/fleet/internal/dispatch"
+	"github.com/kandev/kandev/apps/fleet/internal/handoff"
 	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/limits"
 	"github.com/kandev/kandev/apps/fleet/internal/registry"
@@ -173,6 +174,8 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	d := dispatch.New(dispatch.Config{WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
 	deps.Dispatch = d
+	deps.Handoffs = handoff.New(db, client, launcher, log)
+	deps.HandoffCounts = db
 	go func() {
 		defer close(done)
 		defer func() { _ = launcher.Close() }()

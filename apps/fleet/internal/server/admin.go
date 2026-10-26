@@ -34,6 +34,7 @@ func (s *Server) registerAdminRoutes() {
 	})))
 	s.mux.HandleFunc("POST /v1/admin/seats/{id}/rotate-secret", s.adminOnly(s.handleRotateSecret))
 	s.mux.HandleFunc("GET /v1/admin/handoffs", s.adminOnly(s.handleListHandoffs))
+	s.mux.HandleFunc("POST /v1/admin/handoffs/{id}/accept", s.adminOnly(s.handleAcceptHandoff))
 }
 
 func (s *Server) handleListHandoffs(w http.ResponseWriter, r *http.Request) {

@@ -169,3 +169,19 @@ func sortedKeys[V any](m map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// handoffStates is every handoff state, so an empty state still reports 0.
+var handoffStates = []string{
+	store.HandoffOffered, store.HandoffAccepted, store.HandoffDone,
+	store.HandoffFailed, store.HandoffExhausted, store.HandoffWithdrawn,
+}
+
+// WriteHandoffs writes handoff counts by state.
+func WriteHandoffs(w io.Writer, counts map[string]int) error {
+	e := &encoder{w: w}
+	e.help("fleet_handoffs", "Handoffs by state.")
+	for _, state := range handoffStates {
+		e.sample("fleet_handoffs", labels{{"state", state}}, float64(counts[state]))
+	}
+	return e.err
+}

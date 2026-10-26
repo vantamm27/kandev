@@ -126,3 +126,16 @@ func truncate(s string, n int) string {
 	}
 	return s[:n]
 }
+
+// MoveClaim points a launched task's claim at the seat it now runs on.
+func (s *Store) MoveClaim(ctx context.Context, taskID, seatID, sessionID string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET seat_id = ?, session_id = ?, state = ?, updated_at = ?
+		WHERE task_id = ?`, seatID, sessionID, ClaimLaunched, now.UTC(), taskID)
+	if err != nil {
+		return fmt.Errorf("move claim: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("move claim %s: no claim", taskID)
+	}
+	return nil
+}

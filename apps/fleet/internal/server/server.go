@@ -42,7 +42,11 @@ type Deps struct {
 	MetricsToken string
 	// Dispatch adds queue and launch metrics when the dispatcher runs.
 	Dispatch DispatchStatser
-	Log      *slog.Logger
+	// Handoffs accepts handoffs; nil disables the accept endpoint.
+	Handoffs HandoffAcceptor
+	// HandoffCounts adds handoff metrics.
+	HandoffCounts HandoffCounter
+	Log           *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

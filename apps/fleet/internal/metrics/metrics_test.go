@@ -89,3 +89,16 @@ func TestWriteDispatch(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteHandoffs(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteHandoffs(&buf, map[string]int{"offered": 2, "done": 1}); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{`fleet_handoffs{state="offered"} 2`, `fleet_handoffs{state="done"} 1`, `fleet_handoffs{state="exhausted"} 0`} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in:\n%s", want, out)
+		}
+	}
+}

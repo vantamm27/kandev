@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/kandev/kandev/apps/fleet/internal/admin"
+	"github.com/kandev/kandev/apps/fleet/internal/handoff"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
@@ -101,5 +102,53 @@ func TestAdminListHandoffs(t *testing.T) {
 	rec := adminRequest(t, &fakeAdmin{}, "tok", http.MethodGet, "/v1/admin/handoffs?state=offered,exhausted", "Bearer tok")
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"state":"offered+exhausted"`) {
 		t.Fatalf("list handoffs = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+type fakeAcceptor struct {
+	err error
+	got [2]string
+}
+
+func (f *fakeAcceptor) Accept(_ context.Context, id, seat string) (store.Handoff, error) {
+	f.got = [2]string{id, seat}
+	return store.Handoff{ID: id, ToSeatID: seat, State: store.HandoffDone}, f.err
+}
+
+func acceptRequestRec(t *testing.T, acc HandoffAcceptor, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	srv := New(Deps{DB: fakePinger{}, Admin: &fakeAdmin{}, AdminToken: "tok", Handoffs: acc, Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/handoffs/hoff_1/accept", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestAcceptHandoffEndpoint(t *testing.T) {
+	acc := &fakeAcceptor{}
+	rec := acceptRequestRec(t, acc, `{"seat_id":"seat_b"}`)
+	if rec.Code != http.StatusOK || acc.got != [2]string{"hoff_1", "seat_b"} || !strings.Contains(rec.Body.String(), `"state":"done"`) {
+		t.Fatalf("accept = %d %s %v", rec.Code, rec.Body.String(), acc.got)
+	}
+	if rec := acceptRequestRec(t, acc, `{}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing seat = %d", rec.Code)
+	}
+	for name, tc := range map[string]struct {
+		err    error
+		status int
+	}{
+		"gone":       {store.ErrHandoffNotFound, http.StatusNotFound},
+		"taken":      {store.ErrSeatStateConflict, http.StatusConflict},
+		"seat busy":  {handoff.ErrSeatUnavailable, http.StatusConflict},
+		"same owner": {handoff.ErrSameOwner, http.StatusBadRequest},
+		"kandev":     {&handoff.KandevError{Err: errors.New("x")}, http.StatusBadGateway},
+		"internal":   {errors.New("db"), http.StatusInternalServerError},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if rec := acceptRequestRec(t, &fakeAcceptor{err: tc.err}, `{"seat_id":"s"}`); rec.Code != tc.status {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.status)
+			}
+		})
 	}
 }

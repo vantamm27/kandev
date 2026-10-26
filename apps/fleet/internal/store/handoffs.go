@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -118,4 +119,70 @@ func (s *Store) WithdrawHandoffs(ctx context.Context, taskID string, now time.Ti
 		return fmt.Errorf("withdraw handoffs: %w", err)
 	}
 	return nil
+}
+
+// GetHandoff reads one handoff.
+func (s *Store) GetHandoff(ctx context.Context, id string) (Handoff, error) {
+	var h Handoff
+	err := s.db.QueryRowContext(ctx, `SELECT id, task_id, from_seat_id, COALESCE(to_seat_id, ''), state, path, attempt,
+		created_at, updated_at FROM handoffs WHERE id = ?`, id).
+		Scan(&h.ID, &h.TaskID, &h.FromSeatID, &h.ToSeatID, &h.State, &h.Path, &h.Attempt, &h.CreatedAt, &h.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Handoff{}, ErrHandoffNotFound
+	}
+	if err != nil {
+		return Handoff{}, fmt.Errorf("read handoff: %w", err)
+	}
+	return h, nil
+}
+
+// AcceptHandoff moves an offered handoff to accepted for toSeatID. It fails
+// with ErrSeatStateConflict when the offer was already taken or withdrawn.
+func (s *Store) AcceptHandoff(ctx context.Context, id, toSeatID string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE handoffs SET state = ?, to_seat_id = ?, updated_at = ?
+		WHERE id = ? AND state = ?`, HandoffAccepted, toSeatID, now.UTC(), id, HandoffOffered)
+	if err != nil {
+		return fmt.Errorf("accept handoff: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("accept handoff: %w", err)
+	} else if n == 1 {
+		return nil
+	}
+	if _, err := s.GetHandoff(ctx, id); err != nil {
+		return err
+	}
+	return ErrSeatStateConflict
+}
+
+// FinishHandoff records the outcome of an accepted handoff.
+func (s *Store) FinishHandoff(ctx context.Context, id, state, path string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE handoffs SET state = ?, path = ?, updated_at = ? WHERE id = ? AND state = ?`,
+		state, path, now.UTC(), id, HandoffAccepted)
+	if err != nil {
+		return fmt.Errorf("finish handoff: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("finish handoff %s: not accepted", id)
+	}
+	return nil
+}
+
+// CountHandoffs returns handoff counts by state.
+func (s *Store) CountHandoffs(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM handoffs GROUP BY state`)
+	if err != nil {
+		return nil, fmt.Errorf("count handoffs: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]int{}
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, err
+		}
+		out[state] = n
+	}
+	return out, rows.Err()
 }

@@ -16,6 +16,11 @@ type SeatLister interface {
 	ListSeats(ctx context.Context) ([]store.SeatSummary, error)
 }
 
+// HandoffCounter counts handoffs by state for metrics.
+type HandoffCounter interface {
+	CountHandoffs(ctx context.Context) (map[string]int, error)
+}
+
 // DispatchStatser reports dispatcher stats for metrics.
 type DispatchStatser interface {
 	MetricsStats() metrics.DispatchStats
@@ -43,6 +48,16 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	if err := metrics.WriteSeats(&buf, seats, s.now()); err != nil {
 		http.Error(w, "metrics unavailable", http.StatusInternalServerError)
 		return
+	}
+	if s.deps.HandoffCounts != nil {
+		counts, err := s.deps.HandoffCounts.CountHandoffs(r.Context())
+		if err == nil {
+			err = metrics.WriteHandoffs(&buf, counts)
+		}
+		if err != nil {
+			http.Error(w, "metrics unavailable", http.StatusInternalServerError)
+			return
+		}
 	}
 	if s.deps.Dispatch != nil {
 		if err := metrics.WriteDispatch(&buf, s.deps.Dispatch.MetricsStats()); err != nil {
