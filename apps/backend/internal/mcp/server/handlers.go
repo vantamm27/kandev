@@ -263,6 +263,12 @@ func (s *Server) createTaskHandler() server.ToolHandlerFunc {
 		if externalID := req.GetString("external_id", ""); externalID != "" {
 			payload["external_id"] = externalID
 		}
+		if priority := req.GetString("priority", ""); priority != "" {
+			payload["priority"] = priority
+		}
+		if assignee := req.GetString("assignee_user_id", ""); assignee != "" {
+			payload["assignee_user_id"] = assignee
+		}
 
 		// Dependency edges declared at create time. The handler already read
 		// blocked_by from its payload before this feature, but the tool schema

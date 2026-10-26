@@ -910,6 +910,22 @@ GitHub rate coordination is internal to Kandev. The MCP surface does not expose
 a standalone rate snapshot tool. Workflow Sync documents the operation-local
 details returned when a sync fails because of a GitHub rate limit.
 
+### Priority and human assignee at creation
+
+`create_task_kandev` accepts two optional fields:
+
+- `priority`: one of `critical`, `high`, `medium`, or `low`. Omitting it gives
+  `medium`. Any other value is rejected as a validation error before a task is
+  created.
+- `assignee_user_id`: the human assignee, either a Kandev user ID or `me` for
+  the authenticated caller. The user must exist, be active, and be able to
+  reach the task workspace; otherwise the create fails and no task is written.
+  With authentication disabled there is no real caller, so `me` leaves the task
+  unassigned.
+
+Setting an assignee does not choose the agent, executor, or session. Use
+`agent_profile_id` and `executor_profile_id` for that.
+
 ### Provider-scoped review automation tools
 
 Task-mode review automation tools follow the providers attached to the task's

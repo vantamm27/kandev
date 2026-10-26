@@ -411,6 +411,11 @@ func (s *Service) prepareTaskForCreation(ctx context.Context, req *CreateTaskReq
 	}
 	task := s.buildTask(ctx, req, workflowStepID)
 	task.ExternalID = externalID
+	assignee, err := s.resolveTaskAssignee(ctx, task, req.AssigneeUserID)
+	if err != nil {
+		return nil, err
+	}
+	task.AssigneeUserID = assignee
 
 	// Auto-assign identifier for office tasks
 	if isOfficeRequest(req) {

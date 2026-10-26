@@ -892,6 +892,10 @@ func (h *Handlers) handleCreateTask(ctx context.Context, msg *ws.Message) (*ws.M
 	if req.AssigneeAgentProfileID != "" {
 		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, "assignee_agent_profile_id is office-only and cannot be set via create_task_kandev", nil)
 	}
+	if err := validateMCPCreateTaskPriority(req.Priority); err != nil {
+		return ws.NewError(msg.ID, msg.Action, ws.ErrorCodeValidation, err.Error(), nil)
+	}
+	req.AssigneeUserID = resolveMCPAssigneeUserID(ctx, req.AssigneeUserID)
 
 	// Default start_agent to true for backward compatibility
 	startAgent := req.StartAgent == nil || *req.StartAgent
@@ -1060,6 +1064,8 @@ func (h *Handlers) handleCreateTask(ctx context.Context, msg *ws.Message) (*ws.M
 		BlockedBy:              req.BlockedBy,
 		StartWhenUnblocked:     req.StartWhenUnblocked,
 		AssigneeAgentProfileID: req.AssigneeAgentProfileID,
+		AssigneeUserID:         req.AssigneeUserID,
+		Priority:               req.Priority,
 		Metadata:               metadata,
 		DeferredLaunch:         deferredLaunch,
 		StartAgent:             startAgent,
@@ -1210,6 +1216,9 @@ func classifyCreateTaskError(err error) string {
 		// bare "Failed to create task" naming neither the field nor the
 		// offending value — the cause reached the backend log and nowhere else.
 		errors.Is(err, service.ErrTaskReferenceNotFound),
+		errors.Is(err, service.ErrMemberUserNotFound),
+		errors.Is(err, service.ErrMemberUserDisabled),
+		errors.Is(err, service.ErrAssigneeCannotReachWorkspace),
 		isMCPWorkflowNotFoundError(err):
 		return ws.ErrorCodeValidation
 	default:

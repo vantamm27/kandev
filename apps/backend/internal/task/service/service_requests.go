@@ -139,6 +139,10 @@ type CreateTaskRequest struct {
 	// (docs/specs/tasks/requirements/external-id-idempotency.md). Accepted on REST
 	// and MCP; empty means no idempotency key.
 	ExternalID string `json:"external_id,omitempty"`
+	// AssigneeUserID names the human assignee at creation. It passes the same
+	// checks as an assignment update: the user exists, is active, and reaches
+	// the task workspace. Empty leaves the task unassigned.
+	AssigneeUserID string `json:"assignee_user_id,omitempty"`
 	// AllowReservedExternalID permits ExternalID to carry the
 	// ReservedExternalIDPrefixCoordinatorProposal prefix, which every other
 	// caller is refused (docs/specs/coordinator/system-design/proposals.md#reserved-prefix).

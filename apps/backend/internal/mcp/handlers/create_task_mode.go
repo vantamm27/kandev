@@ -37,6 +37,8 @@ type mcpCreateTaskRequest struct {
 	AssigneeAgentProfileID string               `json:"assignee_agent_profile_id"`
 	ExternalID             string               `json:"external_id"`
 	MCPServerIDs           []string             `json:"mcp_server_ids"`
+	Priority               string               `json:"priority"`
+	AssigneeUserID         string               `json:"assignee_user_id"`
 }
 
 type mcpCreateTaskAdmission struct {
