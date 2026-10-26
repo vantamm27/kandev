@@ -8,7 +8,21 @@ subscription seats (one seat = one owner = one macOS user on a node). See
 This is its own Go module so it builds and tests without the backend.
 
 - `cmd/fleetd`: the service (registry API, heartbeats, dispatcher).
-- `cmd/fleet-agent`: the node agent (planned, backlog F5).
+- `cmd/fleet-agent`: the node agent, run as each seat's macOS user.
+
+## Register a seat (on the node, as the seat user)
+
+```sh
+FLEET_REGISTRATION_TOKEN=fleet_reg_... fleet-agent register \
+  --fleetd http://fleetd.internal:8484 --ssh-host 10.0.0.5 \
+  --labels macos --capacity 1 \
+  --launch-agent ~/Library/LaunchAgents/com.kandev.fleet-agent.plist
+```
+
+The host key fingerprint is read from `/etc/ssh/ssh_host_ed25519_key.pub`
+(`--host-key` to change) and matches `ssh-keygen -lf`. The registration is
+saved to `~/.config/fleet-agent/config.json` with `0600` permissions; the
+seat's HMAC secret is never printed.
 
 ## Run
 
