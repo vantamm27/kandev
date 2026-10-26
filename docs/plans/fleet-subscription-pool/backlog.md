@@ -73,6 +73,19 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 | C5 | core | Allow the fleet service account to dispatch on seat executors, if S4 shows it is blocked. | blocked | Waits on P0-08. |
 | U1 | plugin | Fleet UI plugin: seats page, queue, handoff banner + "Take task" calling fleetd through an authenticated plugin webhook. | done | `apps/fleet/kandev-plugin` (own Go module, `replace` to the backend for `pluginsdk`). Authenticated actions `fleet.overview` and `fleet.handoff.accept`; the seat is chosen from Kandev's verified `actorID`, never the browser. Admin token stays in plugin config. `/fleet` page (plain `host.jsx`, no build step). Tests: Kandev's manifest parser, `plugin-pack` + `pkgtar.Install`, backend action tests; `node --check` on the bundle. Not yet rendered in a live Kandev (needs DEP1 or a local instance); UI strings are English only. A per-task banner slot is not done. |
 
+## Phase 3b: First live end-to-end run (2026-10-27)
+
+Goal: a task created with `start_agent=false` in the intake step is picked up by fleetd and finished on a seat without a human starting it. Test bed on 10.8.0.238: workspace `fleet-test` (`639e31ff-f376-4a28-8ad3-47f1020f6c9f`), intake step Backlog (`97725d76-b10d-46ce-9df9-2b3f49575939`), seats `seat_2be0ce995e932fa4` (Mac) and `seat_9eb75930014476f8` (Linux).
+
+| ID | Kind | Item | Status | Notes |
+| --- | --- | --- | --- | --- |
+| E1 | agent | Send an agent profile with dispatched launches. | done | Kandev rejected `session.launch` with "task has no agent_profile_id configured". `FLEET_AGENT_PROFILE_ID`, else the workspace default (commit 498208df). |
+| E2 | agent | Pin the host key Kandev actually negotiates. | todo | fleet-agent pins the ED25519 fingerprint, but Kandev's Go SSH client negotiates another host key type (ECDSA first in x/crypto's default order), so every launch fails with "host key changed". Measure the key with the same x/crypto client config Kandev uses; fix the two registered seats. |
+| E3 | agent | Retry tasks whose launch failed inside Kandev. | todo | A failed launch leaves the task `FAILED` with a `FAILED` primary session, and the candidate filter ("no primary session") then never retries it. Treat a task whose fleet claim failed and whose primary session is `FAILED` as a retry candidate, within the attempt budget. |
+| E4 | ops | Opening an intake-step task in the web UI prepares a session on the default executor. | todo | Seen on the first test task: the prepared session failed and blocked dispatch. Document for users; evaluate a guard (I1 would remove it). |
+| E5 | ops | Provider repositories need the workspace's GitHub/GitLab integration even for public repos. | todo | "GitHub is not configured for this workspace". The live test uses a task without a repository until the integration is set up. |
+| E6 | test | Live run: dispatch, launch over SSH, agent turn completes, task leaves the intake step, slot is released. | todo | On both seats. |
+
 ## Ideas
 
 | ID | Kind | Item | Status | Notes |
@@ -127,3 +140,4 @@ Fleet service lives in `apps/fleet` (module `github.com/kandev/kandev/fleet`):
 - 2026-10-26: DEP1 Kandev fork and fleetd deployed on 10.8.0.238; dispatcher off until workspace and intake step are chosen.
 - 2026-10-27: S1 partial: keychain is unreadable over SSH; seats need `claude setup-token` and `~/.zshenv` (verified on seat 1; preflight `ssh-env` check added).
 - 2026-10-27: second seat `seat_9eb75930014476f8` on Linux worker 10.0.28.229 (`ec2-user`, label `linux`), formerly Kandev executor `worker-1` on an API key (removed, backups kept). Needed: SG rule TCP 8484 from the worker to the Kandev host, token exported from `~/.bashrc`, systemd user unit with linger.
+- 2026-10-27: first live dispatch runs: E1 fixed; E2-E5 found; continuing toward E6.
