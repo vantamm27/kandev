@@ -79,6 +79,15 @@ func (c *Client) GetWorkspace(ctx context.Context, id string) (Workspace, error)
 	return out, err
 }
 
+// ListTaskSessions lists a task's sessions.
+func (c *Client) ListTaskSessions(ctx context.Context, taskID string) ([]TaskSession, error) {
+	var out struct {
+		Sessions []TaskSession `json:"sessions"`
+	}
+	err := c.do(ctx, http.MethodGet, "/api/v1/tasks/"+url.PathEscape(taskID)+"/sessions", nil, &out)
+	return out.Sessions, err
+}
+
 // GetWorkflowStep reads one workflow step.
 func (c *Client) GetWorkflowStep(ctx context.Context, id string) (WorkflowStep, error) {
 	var out struct {

@@ -24,6 +24,7 @@ type Tasks interface {
 	ListWorkspaceTasks(ctx context.Context, workspaceID string, opts kandev.ListTasksOptions) (kandev.TaskPage, error)
 	ResetTaskEnvironment(ctx context.Context, taskID string) error
 	GetWorkflowStep(ctx context.Context, id string) (kandev.WorkflowStep, error)
+	ListTaskSessions(ctx context.Context, taskID string) ([]kandev.TaskSession, error)
 }
 
 // Launcher starts and stops Kandev sessions.
@@ -286,8 +287,14 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 // session; launchable then decides whether its session allows a launch.
 // agentSteps caches, for the round, whether a step starts the agent on enter.
 func (d *Dispatcher) waitsForSeat(ctx context.Context, t kandev.Task, claims map[string]store.Claim, agentSteps map[string]bool) bool {
-	if c := claims[t.ID]; c.State == store.ClaimReleased {
+	switch c := claims[t.ID]; c.State {
+	case store.ClaimReleased:
 		return d.workflowWentOn(ctx, t, c, agentSteps)
+	case store.ClaimFailed:
+		// fleetd's own launch failed: retry it wherever the workflow is now.
+		if !kandev.TaskDone(t.State) {
+			return true
+		}
 	}
 	if slices.Contains(d.cfg.IntakeStepIDs, t.WorkflowStepID) && t.AssigneeUserID != "" {
 		return true
@@ -299,9 +306,9 @@ func (d *Dispatcher) waitsForSeat(ctx context.Context, t kandev.Task, claims map
 // failed session is retried only when fleetd's own launch created it or
 // fleetd released the task. A session that never sent a prompt is one Kandev
 // prepared when someone opened or created the task, unless fleetd's own
-// launch is still in flight. A stopped session is relaunched only for a
-// released task, whose session fleetd stopped. Any other session belongs to a
-// person or to a running launch.
+// launch is still in flight. A stopped session is relaunched only when fleetd
+// stopped it (a released task) or its relaunch failed. Any other session
+// belongs to a person or to a running launch.
 func launchable(t kandev.Task, claims map[string]store.Claim) bool {
 	if t.PrimarySessionID == nil {
 		return true
@@ -314,7 +321,7 @@ func launchable(t kandev.Task, claims map[string]store.Claim) bool {
 	case t.PrimarySessionIs(kandev.SessionStateCreated):
 		return !ok || retryable
 	case t.PrimarySessionIs(kandev.SessionStateCancelled):
-		return ok && c.State == store.ClaimReleased
+		return retryable
 	default:
 		return false
 	}
@@ -452,12 +459,18 @@ func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Cla
 }
 
 // start sends session.launch for a task, after taking over a session Kandev
-// prepared on its own host.
+// prepared on its own host, or clearing sessions Kandev started away from
+// the seat of a stopped or failed one.
 func (d *Dispatcher) start(ctx context.Context, t kandev.Task, profileID, priority string) (kandev.LaunchSessionResult, error) {
-	if t.PrimarySessionIs(kandev.SessionStateCreated) {
-		if err := d.takeOver(ctx, t.ID, *t.PrimarySessionID); err != nil {
-			return kandev.LaunchSessionResult{}, err
-		}
+	var err error
+	switch {
+	case t.PrimarySessionIs(kandev.SessionStateCreated):
+		err = d.takeOver(ctx, t.ID, *t.PrimarySessionID)
+	case t.PrimarySessionIs(kandev.SessionStateCancelled) || t.PrimarySessionIs(kandev.SessionStateFailed):
+		err = d.clearStraySessions(ctx, t)
+	}
+	if err != nil {
+		return kandev.LaunchSessionResult{}, err
 	}
 	res, err := d.launcher.LaunchSession(ctx, kandev.LaunchSessionInput{
 		TaskID: t.ID, Intent: kandev.IntentStart, AgentProfileID: d.cfg.AgentProfileID,
@@ -481,6 +494,46 @@ func (d *Dispatcher) takeOver(ctx context.Context, taskID, sessionID string) err
 	if err := d.tasks.ResetTaskEnvironment(ctx, taskID); err != nil && !kandev.IsNotFound(err) {
 		return fmt.Errorf("reset the prepared task environment: %w", err)
 	}
+	return nil
+}
+
+// clearStraySessions handles sessions Kandev started for the task on another
+// executor than its primary session's, such as its own host when a released
+// task entered an auto_start_agent step. Such a session built the task
+// environment there, and a seat launch cannot reuse it: fleetd stops the live
+// ones and resets the environment. The primary session's directory stays on
+// its seat.
+func (d *Dispatcher) clearStraySessions(ctx context.Context, t kandev.Task) error {
+	sessions, err := d.tasks.ListTaskSessions(ctx, t.ID)
+	if err != nil {
+		return fmt.Errorf("list the task's sessions: %w", err)
+	}
+	home := ""
+	for _, s := range sessions {
+		if s.ID == *t.PrimarySessionID {
+			home = s.ExecutorID
+		}
+	}
+	stray := false
+	for _, s := range sessions {
+		if s.ExecutorID == home {
+			continue
+		}
+		stray = true
+		if !s.Live() {
+			continue
+		}
+		if err := d.launcher.StopSession(ctx, s.ID, "fleetd: running the task on its seat"); err != nil {
+			d.log.Warn("could not stop a session started away from the seat", "task_id", t.ID, "session_id", s.ID, "error", err)
+		}
+	}
+	if !stray {
+		return nil
+	}
+	if err := d.tasks.ResetTaskEnvironment(ctx, t.ID); err != nil && !kandev.IsNotFound(err) {
+		return fmt.Errorf("reset the task environment: %w", err)
+	}
+	d.log.Info("cleared sessions started away from the seat", "task_id", t.ID)
 	return nil
 }
 

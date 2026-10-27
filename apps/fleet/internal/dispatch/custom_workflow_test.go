@@ -2,6 +2,7 @@ package dispatch
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -197,5 +198,54 @@ func TestSeveralIntakeSteps(t *testing.T) {
 	}
 	if len(got) != 2 || !got["t-1"] || !got["t-other"] {
 		t.Fatalf("launched = %v; want the tasks of both intake steps", got)
+	}
+}
+
+// Kandev's own start of a released task (on its host, which has no
+// subscription login) leaves a session there that built the task environment
+// on that host. fleetd stops it and resets the environment, or the seat launch
+// fails with "workspace reuse is unsafe".
+func TestRelaunchClearsASessionKandevStartedElsewhere(t *testing.T) {
+	_, tasks, launcher, d, _ := releasedFixture(t)
+	tasks.steps = map[string]bool{"step-implement": true}
+	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
+	moved.WorkflowStepID = "step-implement"
+	tasks.tasks = []kandev.Task{moved}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {
+		{ID: "sess-plan", State: "CANCELLED", ExecutorID: "exec-a1"},
+		{ID: "sess-host", State: "WAITING_FOR_INPUT"},
+	}}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(launcher.stopped, ",") != "sess-host" || strings.Join(tasks.resets, ",") != "t-plan" {
+		t.Fatalf("stopped = %v, resets = %v; want the host session stopped and the environment reset", launcher.stopped, tasks.resets)
+	}
+	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" {
+		t.Fatalf("calls = %+v", launcher.calls)
+	}
+}
+
+// A relaunch that failed leaves the stopped session primary; fleetd retries
+// its own failed launch wherever the task's workflow now is.
+func TestFailedRelaunchIsRetried(t *testing.T) {
+	_, tasks, launcher, d, clock := releasedFixture(t)
+	tasks.steps = map[string]bool{"step-implement": true}
+	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
+	moved.WorkflowStepID = "step-implement"
+	tasks.tasks = []kandev.Task{moved}
+	launcher.err = errors.New("kandev: session.launch: workspace reuse is unsafe")
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	launcher.err = nil
+	failed := inState(moved, "FAILED")
+	tasks.tasks = []kandev.Task{failed}
+	*clock = clock.Add(2 * time.Minute)
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(launcher.calls) != 2 {
+		t.Fatalf("calls = %d; the failed relaunch must be retried", len(launcher.calls))
 	}
 }

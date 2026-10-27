@@ -165,6 +165,18 @@ func TestGetWorkspaceReadsTheDefaultAgentProfile(t *testing.T) {
 	}
 }
 
+func TestListTaskSessions(t *testing.T) {
+	client, rec := restServer(t, http.StatusOK,
+		`{"sessions":[{"id":"s-1","state":"CANCELLED","executor_id":"exec-seat"},{"id":"s-2","state":"WAITING_FOR_INPUT"}],"total":2}`)
+	sessions, err := client.ListTaskSessions(context.Background(), "task-1")
+	if err != nil || len(sessions) != 2 || sessions[0].ExecutorID != "exec-seat" || sessions[0].Live() || !sessions[1].Live() {
+		t.Fatalf("ListTaskSessions = %+v, %v", sessions, err)
+	}
+	if rec.Method != http.MethodGet || rec.Path != "/api/v1/tasks/task-1/sessions" {
+		t.Fatalf("request = %s %s", rec.Method, rec.Path)
+	}
+}
+
 func TestGetWorkflowStepReadsOnEnterActions(t *testing.T) {
 	client, rec := restServer(t, http.StatusOK,
 		`{"step":{"id":"step-1","name":"Plan","events":{"on_enter":[{"type":"enable_plan_mode"},{"type":"auto_start_agent"}]}}}`)

@@ -143,8 +143,7 @@ type Task struct {
 // PrimarySessionLive reports whether the task's primary session has a live
 // agent.
 func (t Task) PrimarySessionLive() bool {
-	return t.PrimarySessionIs(SessionStateStarting) || t.PrimarySessionIs(SessionStateRunning) ||
-		t.PrimarySessionIs(SessionStateWaitingForInput)
+	return t.PrimarySessionState != nil && TaskSession{State: *t.PrimarySessionState}.Live()
 }
 
 // PrimarySessionIs reports whether the task's primary session is in state.
@@ -224,4 +223,21 @@ func (s WorkflowStep) StartsAgentOnEnter() bool {
 		}
 	}
 	return false
+}
+
+// TaskSession is the subset of a Kandev task session summary fleetd reads.
+type TaskSession struct {
+	ID         string `json:"id"`
+	State      string `json:"state"`
+	ExecutorID string `json:"executor_id,omitempty"`
+}
+
+// Live reports whether the session has a live agent.
+func (s TaskSession) Live() bool {
+	switch s.State {
+	case SessionStateStarting, SessionStateRunning, SessionStateWaitingForInput:
+		return true
+	default:
+		return false
+	}
 }

@@ -23,6 +23,11 @@ type fakeTasks struct {
 	// steps maps a workflow step ID to whether it starts the agent on enter.
 	steps     map[string]bool
 	stepReads int
+	sessions  map[string][]kandev.TaskSession
+}
+
+func (f *fakeTasks) ListTaskSessions(_ context.Context, taskID string) ([]kandev.TaskSession, error) {
+	return f.sessions[taskID], nil
 }
 
 func (f *fakeTasks) GetWorkflowStep(_ context.Context, id string) (kandev.WorkflowStep, error) {
