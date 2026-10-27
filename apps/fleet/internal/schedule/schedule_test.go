@@ -175,3 +175,10 @@ func TestUnknownPriorityWaits(t *testing.T) {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
+
+func TestUnassignedTaskWaits(t *testing.T) {
+	plan := Schedule([]Task{task("t", "", PriorityHigh, 0)}, []Seat{seat("s", "a", 1)}, now, DefaultPolicy())
+	if waiting(plan)["t"] != ReasonNoAssignee || len(plan.Assignments) != 0 {
+		t.Fatalf("plan = %+v", plan)
+	}
+}

@@ -129,6 +129,12 @@ func (c *Client) ListWorkspaceTasks(ctx context.Context, workspaceID string, opt
 	return out, err
 }
 
+// ResetTaskEnvironment tears down a task's environment so the next launch
+// builds a fresh one. Kandev refuses it while a session is starting or running.
+func (c *Client) ResetTaskEnvironment(ctx context.Context, taskID string) error {
+	return c.do(ctx, http.MethodPost, "/api/v1/tasks/"+url.PathEscape(taskID)+"/environment/reset", map[string]bool{}, nil)
+}
+
 // SetTaskAssignee sets the human assignee; an empty userID unassigns.
 func (c *Client) SetTaskAssignee(ctx context.Context, taskID, userID string) (Task, error) {
 	var out Task

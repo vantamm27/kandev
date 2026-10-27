@@ -81,14 +81,23 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 
 ## Dispatching
 
-Each round fleetd lists the workspace's tasks and picks those that are in the
-intake step, have a human assignee, and have no session yet. Do not open them
-in the web UI before they start: the UI prepares a session whose workspace
-lives on Kandev's default executor, and Kandev then refuses to start the task
-on a seat. Create them with
-`start_agent=false` (for example `create_task_kandev` with
-`assignee_user_id: "me"`), otherwise Kandev starts them on its default
-executor. The schedule package orders them (priority plus capped aging) and
+Each round fleetd lists the workspace's tasks and picks those waiting for a
+seat:
+
+- tasks in the intake step with a human assignee, and
+- tasks created with the fleet agent profile (`FLEET_AGENT_PROFILE_ID`) and not
+  started, in any step. In the web UI: pick that profile, choose **Create
+  without starting agent**, then **Assign to me** in the task's top bar.
+
+A task waits only if it has no session, or its only session is fleetd's own
+failed launch, or a session that never sent a prompt. The web UI prepares such
+a session on Kandev's own host when a task is created or opened; fleetd stops
+it and resets the task environment before launching on a seat. A fleet task
+without an assignee waits with reason `no_assignee`, since Kandev does not
+record who created a task and fleetd only runs work on its owner's seats.
+Create tasks through the API with `start_agent=false` (for example
+`create_task_kandev` with `assignee_user_id: "me"`), otherwise Kandev starts
+them on its default executor. The schedule package orders them (priority plus capped aging) and
 assigns each to one of the assignee's own seats that is online with a free
 slot, has the required labels, enough quota, and room in its weekly pacing.
 fleetd claims the task, then sends `session.launch` with the seat's executor

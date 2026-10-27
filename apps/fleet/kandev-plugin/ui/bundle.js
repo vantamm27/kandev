@@ -15,6 +15,7 @@
     quota: "not enough quota left",
     weekly_pacing: "weekly usage ahead of pace",
     unknown_priority: "unknown priority",
+    no_assignee: "nobody is assigned; use Assign to me in the task's top bar",
   };
 
   var OUTCOMES = ["running", "launching", "review", "completed", "cancelled", "failed", "deleted", "launch_failed"];

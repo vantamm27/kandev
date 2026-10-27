@@ -16,7 +16,16 @@ import (
 
 var t0 = time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 
-type fakeTasks struct{ tasks []kandev.Task }
+type fakeTasks struct {
+	tasks    []kandev.Task
+	resets   []string
+	resetErr error
+}
+
+func (f *fakeTasks) ResetTaskEnvironment(_ context.Context, taskID string) error {
+	f.resets = append(f.resets, taskID)
+	return f.resetErr
+}
 
 func (f *fakeTasks) ListWorkspaceTasks(_ context.Context, ws string, opts kandev.ListTasksOptions) (kandev.TaskPage, error) {
 	if ws != "ws-1" {
@@ -38,6 +47,14 @@ type fakeLauncher struct {
 	calls   []kandev.LaunchSessionInput
 	err     error
 	primary []string
+	stopped []string
+}
+
+func (f *fakeLauncher) StopSession(_ context.Context, sessionID, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stopped = append(f.stopped, sessionID)
+	return nil
 }
 
 func (f *fakeLauncher) SetPrimarySession(_ context.Context, sessionID string) error {

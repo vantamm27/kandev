@@ -99,6 +99,13 @@ const (
 	TaskStateFailed    = "FAILED"
 )
 
+// Kandev session states fleetd acts on: a session that ended in an error,
+// and one that was prepared but never sent a prompt.
+const (
+	SessionStateFailed  = "FAILED"
+	SessionStateCreated = "CREATED"
+)
+
 // TaskDone reports whether a task in state needs no more work from its seat.
 func TaskDone(state string) bool {
 	switch state {
@@ -124,6 +131,13 @@ type Task struct {
 	PrimarySessionState *string   `json:"primary_session_state,omitempty"`
 	CreatedAt           time.Time `json:"created_at"`
 	UpdatedAt           time.Time `json:"updated_at"`
+	// PrimaryAgentProfileID is the agent profile the task was created with.
+	PrimaryAgentProfileID string `json:"primary_agent_profile_id,omitempty"`
+}
+
+// PrimarySessionIs reports whether the task's primary session is in state.
+func (t Task) PrimarySessionIs(state string) bool {
+	return t.PrimarySessionState != nil && *t.PrimarySessionState == state
 }
 
 // ListTasksOptions filters GET /api/v1/workspaces/:id/tasks.

@@ -116,6 +116,14 @@ func TestTaskReadsAndAssignee(t *testing.T) {
 		t.Fatalf("unassign must send an explicit empty assignee, body = %+v", rec.Body)
 	}
 
+	client, rec = restServer(t, http.StatusOK, `{"success":true}`)
+	if err := client.ResetTaskEnvironment(context.Background(), "task-1"); err != nil {
+		t.Fatalf("ResetTaskEnvironment: %v", err)
+	}
+	if rec.Method != http.MethodPost || rec.Path != "/api/v1/tasks/task-1/environment/reset" {
+		t.Fatalf("request = %s %s", rec.Method, rec.Path)
+	}
+
 	client, rec = restServer(t, http.StatusOK, `{"tasks":[{"id":"a"},{"id":"b"}],"total":7}`)
 	page, err := client.ListWorkspaceTasks(context.Background(), "ws-1", ListTasksOptions{WorkflowID: "wf-1", Page: 2, PageSize: 50})
 	if err != nil || len(page.Tasks) != 2 || page.Total != 7 {

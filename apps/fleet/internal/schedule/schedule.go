@@ -94,6 +94,9 @@ const (
 	ReasonQuota    = "quota"         // remaining quota below the estimated cost
 	ReasonPacing   = "weekly_pacing" // weekly usage ahead of even spend
 	ReasonPriority = "unknown_priority"
+	// ReasonNoAssignee: Kandev does not record who created a task, so an
+	// unassigned task has no owner whose seats could run it.
+	ReasonNoAssignee = "no_assignee"
 )
 
 // Assignment starts a task on a seat.
@@ -131,6 +134,10 @@ func Schedule(tasks []Task, seats []Seat, now time.Time, p Policy) Plan {
 	queue := make([]scored, 0, len(tasks))
 	var plan Plan
 	for _, t := range tasks {
+		if t.OwnerUserID == "" {
+			plan.Waiting = append(plan.Waiting, Waiting{TaskID: t.ID, Reason: ReasonNoAssignee})
+			continue
+		}
 		class, ok := p.Classes[t.Priority]
 		if !ok {
 			plan.Waiting = append(plan.Waiting, Waiting{TaskID: t.ID, Reason: ReasonPriority})
