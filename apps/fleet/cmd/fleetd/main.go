@@ -186,6 +186,7 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	d.Nudges = nudge.New(db, client, launcher, log)
 	d.Tracker = tasktrack.New(db, client, launcher, log)
 	deps.Dispatch = d
+	deps.Rounds = d
 	deps.Handoffs = handoff.New(db, client, launcher, log)
 	deps.HandoffCounts = db
 	go func() {

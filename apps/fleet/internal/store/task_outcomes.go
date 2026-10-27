@@ -3,13 +3,55 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
-// TaskOutcome is a claim with its seat's owner, for metrics.
+// TaskOutcome is a claim with its seat's owner, for metrics and the admin API.
 type TaskOutcome struct {
 	Claim
 	OwnerUserID string
+}
+
+// Outcome classifies the task: launching, running, launch_failed, or the
+// finished Kandev state in lower case.
+func (t TaskOutcome) Outcome() string {
+	switch {
+	case t.State == ClaimFailed:
+		return "launch_failed"
+	case t.State == ClaimLaunching:
+		return "launching"
+	case t.FinishedAt == nil:
+		return "running"
+	default:
+		return strings.ToLower(t.TaskState)
+	}
+}
+
+// End is when the task stopped running: the claim time for a failed launch,
+// the finish time for a finished task, and nothing while it runs.
+func (t TaskOutcome) End() (time.Time, bool) {
+	switch {
+	case t.State == ClaimFailed:
+		return t.ClaimedAt, true
+	case t.FinishedAt != nil:
+		return *t.FinishedAt, true
+	default:
+		return time.Time{}, false
+	}
+}
+
+// Duration is how long the task ran: from launch to finish, or to now while
+// it runs. A failed launch never ran.
+func (t TaskOutcome) Duration(now time.Time) (time.Duration, bool) {
+	if t.State == ClaimFailed {
+		return 0, false
+	}
+	end, ok := t.End()
+	if !ok {
+		end = now
+	}
+	return end.Sub(t.ClaimedAt), true
 }
 
 // ListTaskOutcomes returns every claim with its seat's owner.

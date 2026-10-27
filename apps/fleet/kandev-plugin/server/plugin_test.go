@@ -15,8 +15,10 @@ import (
 type fakeFleetd struct {
 	seats     string
 	acceptErr int
+	seatErr   int
 	gotSeat   string
 	gotAuth   string
+	gotSeatOp string
 }
 
 func (f *fakeFleetd) server(t *testing.T) *httptest.Server {
@@ -42,6 +44,16 @@ func (f *fakeFleetd) server(t *testing.T) *httptest.Server {
 				return
 			}
 			_, _ = io.WriteString(w, `{"id":"hoff_1","task_id":"task-1","to_seat_id":"`+f.gotSeat+`","state":"done"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/tasks":
+			_, _ = io.WriteString(w, `{"queue":{"queued":{"low":1},"waiting":[]},"recent":[],"by_seat":[]}`)
+		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/admin/seats/"):
+			f.gotSeatOp = r.URL.RequestURI()
+			if f.seatErr != 0 {
+				w.WriteHeader(f.seatErr)
+				_, _ = io.WriteString(w, `{"error":"seat is busy"}`)
+				return
+			}
+			_, _ = io.WriteString(w, `{"seat_id":"seat_b1","status":"ok"}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -134,5 +146,36 @@ func TestUnconfiguredAndUnknown(t *testing.T) {
 	}
 	if status, _ := act(t, newPlugin("http://127.0.0.1:1"), "fleet.nope", "user-b", `{}`); status != http.StatusNotFound {
 		t.Fatalf("unknown action = %d", status)
+	}
+}
+
+func TestTasksPassesFleetdThrough(t *testing.T) {
+	srv := (&fakeFleetd{}).server(t)
+	status, out := act(t, newPlugin(srv.URL), actionTasks, "user-b", `{}`)
+	if status != http.StatusOK || out["queue"].(map[string]any)["queued"].(map[string]any)["low"] != float64(1) {
+		t.Fatalf("tasks = %d %+v", status, out)
+	}
+}
+
+func TestManageSeat(t *testing.T) {
+	f := &fakeFleetd{}
+	srv := f.server(t)
+	p := newPlugin(srv.URL)
+	for op, want := range map[string]string{
+		"drain": "/v1/admin/seats/seat_b1/drain", "undrain": "/v1/admin/seats/seat_b1/undrain",
+		"retire": "/v1/admin/seats/seat_b1/retire", "retire_force": "/v1/admin/seats/seat_b1/retire?force=true",
+	} {
+		if status, _ := act(t, p, actionManageSeat, "admin-1", `{"seatId":"seat_b1","op":"`+op+`"}`); status != http.StatusOK || f.gotSeatOp != want {
+			t.Fatalf("%s = %d, called %q, want %q", op, status, f.gotSeatOp, want)
+		}
+	}
+	for _, body := range []string{`{"seatId":"seat_b1","op":"rotate-secret"}`, `{"seatId":"seat_b1","op":"check"}`, `{"seatId":"../handoffs","op":"drain"}`, `{"op":"drain"}`, `nope`} {
+		if status, _ := act(t, p, actionManageSeat, "admin-1", body); status != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400", body, status)
+		}
+	}
+	f.seatErr = http.StatusConflict
+	if status, out := act(t, p, actionManageSeat, "admin-1", `{"seatId":"seat_b1","op":"retire"}`); status != http.StatusConflict || out["error"] != "seat is busy" {
+		t.Fatalf("busy retire = %d %+v", status, out)
 	}
 }

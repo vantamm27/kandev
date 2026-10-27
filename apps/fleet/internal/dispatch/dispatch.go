@@ -53,6 +53,19 @@ type Stats struct {
 	Launched  int
 	Failed    int
 	Exhausted int // tasks that used up their attempts
+	// WaitingTasks are the tasks the round could not start.
+	WaitingTasks []WaitingTask
+	// Titles maps each claimed task the round listed to its title.
+	Titles map[string]string
+}
+
+// WaitingTask is a queued task the round could not start, and why.
+type WaitingTask struct {
+	TaskID         string `json:"task_id"`
+	Title          string `json:"title"`
+	Priority       string `json:"priority"`
+	AssigneeUserID string `json:"assignee_user_id"`
+	Reason         string `json:"reason"`
 }
 
 // LimitScanner runs a post-round scan (limit handoffs, checkpoint nudges).
@@ -188,6 +201,16 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 			stats.Waiting[p] = map[string]int{}
 		}
 		stats.Waiting[p][w.Reason]++
+		t := listed[w.TaskID]
+		stats.WaitingTasks = append(stats.WaitingTasks, WaitingTask{
+			TaskID: w.TaskID, Title: t.Title, Priority: p, AssigneeUserID: t.AssigneeUserID, Reason: w.Reason,
+		})
+	}
+	stats.Titles = make(map[string]string, len(claims))
+	for id := range claims {
+		if t, ok := listed[id]; ok {
+			stats.Titles[id] = t.Title
+		}
 	}
 	for _, a := range plan.Assignments {
 		if d.launch(ctx, a, profiles[a.SeatID], priorities[a.TaskID], retries[a.TaskID]) {

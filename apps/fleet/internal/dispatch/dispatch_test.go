@@ -90,7 +90,7 @@ func seatFor(id, owner string, capacity int) store.Seat {
 }
 
 func intake(id, owner, priority string) kandev.Task {
-	return kandev.Task{ID: id, WorkflowStepID: "step-intake", AssigneeUserID: owner, Priority: priority, CreatedAt: t0}
+	return kandev.Task{ID: id, Title: "title " + id, WorkflowStepID: "step-intake", AssigneeUserID: owner, Priority: priority, CreatedAt: t0}
 }
 
 func TestRoundLaunchesEligibleTasksOnOwnerSeat(t *testing.T) {
@@ -148,8 +148,13 @@ func TestUnconfirmedLaunchesHoldTheSlot(t *testing.T) {
 	if len(launcher.calls) != 1 {
 		t.Fatalf("calls = %d; the seat's only slot is taken until its heartbeat catches up", len(launcher.calls))
 	}
-	if d.LastRound().Waiting["high"]["seats_full"] != 1 {
-		t.Fatalf("waiting = %+v", d.LastRound().Waiting)
+	last := d.LastRound()
+	if last.Waiting["high"]["seats_full"] != 1 {
+		t.Fatalf("waiting = %+v", last.Waiting)
+	}
+	if len(last.WaitingTasks) != 1 || last.WaitingTasks[0].TaskID != "t-2" || last.WaitingTasks[0].Reason != "seats_full" ||
+		last.WaitingTasks[0].AssigneeUserID != "user-a" || last.WaitingTasks[0].Title != "title t-2" || last.Titles["t-1"] != "title t-1" {
+		t.Fatalf("waiting tasks = %+v, titles = %v", last.WaitingTasks, last.Titles)
 	}
 }
 

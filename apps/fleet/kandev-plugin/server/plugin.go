@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -21,7 +22,19 @@ import (
 const (
 	actionOverview = "fleet.overview"
 	actionAccept   = "fleet.handoff.accept"
+	actionTasks    = "fleet.tasks"
+	// actionManageSeat is admin-only in the manifest, so Kandev rejects
+	// members before the plugin sees the request.
+	actionManageSeat = "fleet.seat.manage"
 )
+
+// seatOps maps fleet.seat.manage operations to fleetd admin paths.
+var seatOps = map[string]string{
+	"drain":        "/drain",
+	"undrain":      "/undrain",
+	"retire":       "/retire",
+	"retire_force": "/retire?force=true",
+}
 
 // fleetPlugin proxies member actions to fleetd's admin API.
 type fleetPlugin struct {
@@ -69,6 +82,8 @@ type seat struct {
 	QuotaWeekPct *float64   `json:"quota_week_pct,omitempty"`
 	Reset5hAt    *time.Time `json:"reset_5h_at,omitempty"`
 	ResetWeekAt  *time.Time `json:"reset_week_at,omitempty"`
+	// LastHeartbeatAt is when the seat's node last reported.
+	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
 }
 
 type handoff struct {
@@ -103,6 +118,14 @@ func (p *fleetPlugin) HandleAction(ctx context.Context, req *pluginsdk.PluginAct
 		return p.overview(ctx, cfg, req.Context.ActorID)
 	case actionAccept:
 		return p.accept(ctx, cfg, req.Context.ActorID, req.Body)
+	case actionTasks:
+		var out json.RawMessage
+		if err := p.call(ctx, cfg, http.MethodGet, "/v1/admin/tasks", nil, &out); err != nil {
+			return upstream(err)
+		}
+		return reply(http.StatusOK, out)
+	case actionManageSeat:
+		return p.manageSeat(ctx, cfg, req.Context.ActorID, req.Body)
 	default:
 		return reply(http.StatusNotFound, map[string]string{"error": "unknown action"})
 	}
@@ -141,14 +164,33 @@ func (p *fleetPlugin) accept(ctx context.Context, cfg fleetdConfig, actor string
 	var result handoff
 	payload := map[string]string{"seat_id": mine.ID}
 	if err := p.call(ctx, cfg, http.MethodPost, "/v1/admin/handoffs/"+in.HandoffID+"/accept", payload, &result); err != nil {
-		var se *statusError
-		if errors.As(err, &se) && se.status < http.StatusInternalServerError {
-			return reply(se.status, map[string]string{"error": se.message})
-		}
-		return upstream(err)
+		return fleetdFailure(err)
 	}
 	return reply(http.StatusOK, result)
 }
+
+func (p *fleetPlugin) manageSeat(ctx context.Context, cfg fleetdConfig, actor string, body []byte) (*pluginsdk.PluginActionResponse, error) {
+	var in struct {
+		SeatID string `json:"seatId"`
+		Op     string `json:"op"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil {
+		return reply(http.StatusBadRequest, map[string]string{"error": "invalid request"})
+	}
+	suffix, ok := seatOps[in.Op]
+	if !ok || !seatIDPattern.MatchString(in.SeatID) {
+		return reply(http.StatusBadRequest, map[string]string{"error": "seatId and a known op are required"})
+	}
+	var result map[string]string
+	if err := p.call(ctx, cfg, http.MethodPost, "/v1/admin/seats/"+in.SeatID+suffix, nil, &result); err != nil {
+		return fleetdFailure(err)
+	}
+	logger.Info("seat changed", "seat_id", in.SeatID, "op", in.Op, "actor", actor)
+	return reply(http.StatusOK, result)
+}
+
+// seatIDPattern keeps the seat ID a single path segment.
+var seatIDPattern = regexp.MustCompile(`^seat_[A-Za-z0-9]+$`)
 
 // pickSeat chooses the actor's own online seat with the most free slots. The
 // actor comes from Kandev's verified action context, never the request body,
@@ -245,6 +287,16 @@ func reply(status int, body any) (*pluginsdk.PluginActionResponse, error) {
 		Body:    raw,
 		Headers: map[string]string{"Content-Type": "application/json", "Cache-Control": "no-store"},
 	}, nil
+}
+
+// fleetdFailure passes a fleetd rejection (4xx) to the browser, which explains
+// what the member asked for, and hides anything else behind upstream.
+func fleetdFailure(err error) (*pluginsdk.PluginActionResponse, error) {
+	var se *statusError
+	if errors.As(err, &se) && se.status < http.StatusInternalServerError {
+		return reply(se.status, map[string]string{"error": se.message})
+	}
+	return upstream(err)
 }
 
 // logger writes to stderr; stdout carries the plugin handshake.

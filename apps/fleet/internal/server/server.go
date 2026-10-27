@@ -46,9 +46,11 @@ type Deps struct {
 	Handoffs HandoffAcceptor
 	// HandoffCounts adds handoff metrics.
 	HandoffCounts HandoffCounter
-	// TaskOutcomes adds per-task metrics.
+	// TaskOutcomes adds per-task metrics and the admin task list.
 	TaskOutcomes TaskOutcomeLister
-	Log          *slog.Logger
+	// Rounds adds the queue to the admin task list.
+	Rounds RoundReader
+	Log    *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

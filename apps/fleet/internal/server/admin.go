@@ -33,6 +33,7 @@ func (s *Server) registerAdminRoutes() {
 		return s.deps.Admin.Retire(ctx, id, r.URL.Query().Get("force") == "true")
 	})))
 	s.mux.HandleFunc("POST /v1/admin/seats/{id}/rotate-secret", s.adminOnly(s.handleRotateSecret))
+	s.mux.HandleFunc("GET /v1/admin/tasks", s.adminOnly(s.handleListTasks))
 	s.mux.HandleFunc("GET /v1/admin/handoffs", s.adminOnly(s.handleListHandoffs))
 	s.mux.HandleFunc("POST /v1/admin/handoffs/{id}/accept", s.adminOnly(s.handleAcceptHandoff))
 }
