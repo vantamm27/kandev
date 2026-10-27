@@ -21,6 +21,11 @@ type HandoffCounter interface {
 	CountHandoffs(ctx context.Context) (map[string]int, error)
 }
 
+// TaskOutcomeLister lists claimed tasks for metrics.
+type TaskOutcomeLister interface {
+	ListTaskOutcomes(ctx context.Context) ([]store.TaskOutcome, error)
+}
+
 // DispatchStatser reports dispatcher stats for metrics.
 type DispatchStatser interface {
 	MetricsStats() metrics.DispatchStats
@@ -55,6 +60,17 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 			err = metrics.WriteHandoffs(&buf, counts)
 		}
 		if err != nil {
+			http.Error(w, "metrics unavailable", http.StatusInternalServerError)
+			return
+		}
+	}
+	if s.deps.TaskOutcomes != nil {
+		tasks, err := s.deps.TaskOutcomes.ListTaskOutcomes(r.Context())
+		if err == nil {
+			err = metrics.WriteTasks(&buf, tasks, s.now())
+		}
+		if err != nil {
+			s.deps.Log.Error("metrics: list task outcomes failed", "error", err)
 			http.Error(w, "metrics unavailable", http.StatusInternalServerError)
 			return
 		}

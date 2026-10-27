@@ -74,4 +74,8 @@ var migrations = []string{
 	`
 	ALTER TABLE dispatch_claims ADD COLUMN nudged_at TIMESTAMP;
 	`,
+	`
+	ALTER TABLE dispatch_claims ADD COLUMN task_state TEXT NOT NULL DEFAULT '';
+	ALTER TABLE dispatch_claims ADD COLUMN finished_at TIMESTAMP;
+	`,
 }

@@ -22,9 +22,6 @@ type Tasks interface {
 // offering the task to someone else.
 const DefaultWaitThreshold = 2 * time.Hour
 
-// doneStates are task states that need no seat.
-var doneStates = map[string]bool{"REVIEW": true, "COMPLETED": true, "CANCELLED": true}
-
 // Detector offers handoffs for blocked tasks.
 type Detector struct {
 	store         *store.Store
@@ -94,7 +91,7 @@ func (d *Detector) Scan(ctx context.Context, now time.Time) (int, error) {
 
 func (d *Detector) offer(ctx context.Context, c store.Claim, seat store.SeatSummary, now time.Time) (bool, error) {
 	task, err := d.tasks.GetTask(ctx, c.TaskID)
-	if kandev.IsNotFound(err) || (err == nil && doneStates[task.State]) {
+	if kandev.IsNotFound(err) || (err == nil && kandev.TaskDone(task.State)) {
 		return false, nil
 	}
 	if err != nil {

@@ -51,3 +51,20 @@ func TestMetricsEndpoint(t *testing.T) {
 		t.Fatalf("store error = %d", rec.Code)
 	}
 }
+
+type fakeTaskOutcomes struct{ err error }
+
+func (f fakeTaskOutcomes) ListTaskOutcomes(context.Context) ([]store.TaskOutcome, error) {
+	return []store.TaskOutcome{{Claim: store.Claim{TaskID: "task-1", SeatID: "seat_1", Attempt: 1,
+		State: store.ClaimLaunched, TaskState: "IN_PROGRESS"}, OwnerUserID: "user-a"}}, f.err
+}
+
+func TestMetricsIncludeTaskOutcomes(t *testing.T) {
+	rec := getMetrics(t, Deps{Metrics: fakeLister{}, TaskOutcomes: fakeTaskOutcomes{}}, "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `fleet_tasks{seat="seat_1",owner="user-a",outcome="running"} 1`) {
+		t.Fatalf("task metrics = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := getMetrics(t, Deps{Metrics: fakeLister{}, TaskOutcomes: fakeTaskOutcomes{err: errors.New("db")}}, ""); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("task store error = %d", rec.Code)
+	}
+}

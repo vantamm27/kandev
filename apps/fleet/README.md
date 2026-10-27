@@ -103,6 +103,24 @@ After each round fleetd also:
   5-hour waits are left to the Kandev dynamic profile. Accept with
   `POST /v1/admin/handoffs/{id}/accept`.
 
+## Monitoring
+
+After each dispatch round fleetd reads the Kandev state of every launched task
+it has not yet seen finish (`REVIEW`, `COMPLETED`, `CANCELLED`, `FAILED`, or
+deleted) and records it with the time it finished. `/metrics` reports:
+
+| Metric | Labels | Meaning |
+| --- | --- | --- |
+| `fleet_tasks` | `seat`, `owner`, `outcome` | Tasks launched since the fleet database was created. `outcome` is `launching`, `running`, `launch_failed`, or the finished Kandev state in lower case (`review`, `completed`, `cancelled`, `failed`, `deleted`). |
+| `fleet_task_info` | `task`, `seat`, `owner`, `state`, `outcome`, `attempt` | One series (value 1) per task running now or finished in the last 24 h; `state` is the last Kandev task state. |
+| `fleet_task_duration_seconds` | `task`, `seat`, `owner` | Launch to finish, or launch to now while running. |
+
+`deploy/monitoring` holds a vmagent scrape job (`scrape-fleetd.yml`), vmalert
+rules (`alerts-fleetd.yml`: missing heartbeats, quota at 85 %, cooldown, no
+usable seat, waiting tasks, launch failures, long tasks), and a Grafana
+dashboard (`grafana-fleet-dashboard.json`, import it and pick the
+VictoriaMetrics data source).
+
 ## API
 
 | Endpoint | Auth | Purpose |
@@ -117,7 +135,7 @@ After each round fleetd also:
 | `POST /v1/admin/seats/{id}/rotate-secret` | admin | Issue a new HMAC secret (shown once); put it in the node's config. |
 | `GET /v1/admin/handoffs[?state=offered,...]` | admin | List handoff offers for tasks blocked by a seat's limit. |
 | `POST /v1/admin/handoffs/{id}/accept` | admin | Body `{"seat_id": "..."}`: the member owning that seat takes the task; fleetd reassigns it and starts a new session of the same task on their seat with a checkpoint prompt. On failure the original assignee is restored and the handoff is offered again. |
-| `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`); with the dispatcher, `fleet_queue_tasks{priority}`, `fleet_queue_waiting_tasks{priority,reason}`, `fleet_queue_exhausted_tasks`, `fleet_dispatch_launches_total`, `fleet_dispatch_failures_total`, `fleet_handoffs{state}`. |
+| `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`); with the dispatcher, `fleet_queue_tasks{priority}`, `fleet_queue_waiting_tasks{priority,reason}`, `fleet_queue_exhausted_tasks`, `fleet_dispatch_launches_total`, `fleet_dispatch_failures_total`, `fleet_handoffs{state}`, `fleet_tasks{seat,owner,outcome}`, and for tasks running or finished in the last 24 h `fleet_task_info{task,seat,owner,state,outcome,attempt}` and `fleet_task_duration_seconds{task,seat,owner}`. See [Monitoring](#monitoring). |
 
 Issue a registration token for a seat owner:
 
@@ -135,7 +153,7 @@ keep their state.
 
 ```sh
 fleet-agent preflight            # claude, git, sshd, 20 GiB free disk, sleep disabled (macOS)
-fleet-agent run                  # heartbeat every 30s until SIGTERM (the LaunchAgent runs this)
+fleet-agent run                  # heartbeat every 30s and a quota probe every 5m until SIGTERM
 fleet-agent checkpoint --worktree <dir> --task <kandev-task-id>
 ```
 
@@ -147,11 +165,26 @@ that does not accept push options.
 Free slots are capacity minus this user's `agentctl` processes (one per Kandev
 session).
 
-### Quota file
+### Quota
 
-fleet-agent does not read Claude Code's quota itself. A Claude Code hook or
-statusline script writes `~/.config/fleet-agent/quota.json` (path in the
-config as `quota_file`), and every heartbeat reports it:
+`fleet-agent run` reads the seat's subscription usage every 5 minutes
+(`--quota-probe-interval`, `0` disables it). It sends one Messages request
+(`--quota-probe-model`, default `claude-haiku-4-5`, `max_tokens: 1`) with the
+seat's own login and reads Anthropic's `anthropic-ratelimit-unified-*`
+response headers: 5-hour and 7-day utilization, their reset times, and
+whether the subscription is `rejected`. Each probe costs about 9 tokens of the
+seat's own quota. `count_tokens` does not return these headers, and the
+`/api/oauth/usage` endpoint needs the `user:profile` scope that
+`claude setup-token` tokens lack.
+
+The login is the `CLAUDE_CODE_OAUTH_TOKEN` the login shell exports to SSH
+sessions, read the way sshd runs a command, or else the access token in
+`~/.claude/.credentials.json`. It stays on the node: fleet-agent sends only the
+percentages and reset times to fleetd.
+
+The probe writes `~/.config/fleet-agent/quota.json` (path in the config as
+`quota_file`), and every heartbeat reports it. Another tool may write the same
+file when the probe is disabled:
 
 ```json
 {
@@ -164,10 +197,8 @@ config as `quota_file`), and every heartbeat reports it:
 ```
 
 `limit` is `""`, `"5h"`, or `"week"`. A limit holds until its reset time, or
-for 15 minutes after `updated_at` when no reset time is known (the weekly
-notice has no date). Percentages older than 15 minutes are dropped. With no
-file, the seat reports no limit. Which source fills this file reliably is
-spike S2 in the backlog.
+for 15 minutes after `updated_at` when no reset time is known. Percentages
+older than 15 minutes are dropped. With no file, the seat reports no limit.
 
 ## Test
 

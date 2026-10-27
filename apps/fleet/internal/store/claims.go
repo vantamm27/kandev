@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -25,23 +26,46 @@ type Claim struct {
 	State     string
 	SessionID string
 	LastError string
-	ClaimedAt time.Time
-	UpdatedAt time.Time
+	// TaskState is the Kandev task state fleetd last saw for a launched
+	// task, and FinishedAt when it first saw the task finished.
+	TaskState  string
+	FinishedAt *time.Time
+	ClaimedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+const claimColumns = `c.task_id, c.seat_id, c.attempt, c.state, c.session_id, c.last_error, c.task_state, c.finished_at,
+	c.claimed_at, c.updated_at`
+
+type rowScanner interface{ Scan(dest ...any) error }
+
+func scanClaim(row rowScanner, extra ...any) (Claim, error) {
+	var c Claim
+	var finished sql.NullTime
+	dest := append([]any{&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.TaskState, &finished,
+		&c.ClaimedAt, &c.UpdatedAt}, extra...)
+	if err := row.Scan(dest...); err != nil {
+		return Claim{}, fmt.Errorf("scan claim: %w", err)
+	}
+	if finished.Valid {
+		t := finished.Time
+		c.FinishedAt = &t
+	}
+	return c, nil
 }
 
 // ListClaims returns every claim keyed by task ID.
 func (s *Store) ListClaims(ctx context.Context) (map[string]Claim, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT task_id, seat_id, attempt, state, session_id, last_error,
-		claimed_at, updated_at FROM dispatch_claims`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+claimColumns+` FROM dispatch_claims c`)
 	if err != nil {
 		return nil, fmt.Errorf("list claims: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := map[string]Claim{}
 	for rows.Next() {
-		var c Claim
-		if err := rows.Scan(&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.ClaimedAt, &c.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan claim: %w", err)
+		c, err := scanClaim(rows)
+		if err != nil {
+			return nil, err
 		}
 		out[c.TaskID] = c
 	}
@@ -55,7 +79,8 @@ func (s *Store) BeginClaim(ctx context.Context, taskID, seatID string, now time.
 	res, err := s.db.ExecContext(ctx, `INSERT INTO dispatch_claims (task_id, seat_id, attempt, state, claimed_at, updated_at)
 		VALUES (?, ?, 1, ?, ?, ?)
 		ON CONFLICT(task_id) DO UPDATE SET seat_id = excluded.seat_id, attempt = dispatch_claims.attempt + 1,
-			state = excluded.state, session_id = '', last_error = '', claimed_at = excluded.claimed_at,
+			state = excluded.state, session_id = '', last_error = '', task_state = '', finished_at = NULL,
+			claimed_at = excluded.claimed_at,
 			updated_at = excluded.updated_at
 		WHERE dispatch_claims.state = ?`,
 		taskID, seatID, ClaimLaunching, now.UTC(), now.UTC(), ClaimFailed)

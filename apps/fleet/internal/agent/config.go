@@ -30,21 +30,27 @@ func DefaultConfigPath() (string, error) {
 
 // SaveConfig writes cfg with owner-only permissions.
 func SaveConfig(path string, cfg Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return fmt.Errorf("create config directory: %w", err)
+	if err := writeJSONAtomic(path, cfg); err != nil {
+		return fmt.Errorf("save config: %w", err)
 	}
-	raw, err := json.MarshalIndent(cfg, "", "  ")
+	return nil
+}
+
+// writeJSONAtomic replaces path with v as indented JSON, readable only by the
+// owner, creating the directory if needed.
+func writeJSONAtomic(path string, v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
-		return fmt.Errorf("write config: %w", err)
+		return err
 	}
-	if err := os.Rename(tmp, path); err != nil {
-		return fmt.Errorf("install config: %w", err)
-	}
-	return nil
+	return os.Rename(tmp, path)
 }
 
 // LoadConfig reads a saved config and refuses one other users can read,

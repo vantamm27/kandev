@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kandev/kandev/apps/fleet/internal/hmacauth"
@@ -26,6 +27,23 @@ type Reporter struct {
 	Slots   SlotCounter
 	Log     *slog.Logger
 	Now     func() time.Time
+	// Probe, when set, rewrites Config.QuotaFile every ProbeEvery on its own
+	// schedule, so a slow probe never delays a heartbeat.
+	Probe      *QuotaProbe
+	ProbeEvery time.Duration
+}
+
+// refreshQuota runs the quota probe once and records the result in the quota
+// file the heartbeat reads. A failed probe leaves the old file, which
+// ReadQuota stops trusting after QuotaMaxAge.
+func (r *Reporter) refreshQuota(ctx context.Context) {
+	report, err := r.Probe.Probe(ctx, r.Now())
+	if err == nil {
+		err = WriteQuota(r.Config.QuotaFile, report)
+	}
+	if err != nil && ctx.Err() == nil {
+		r.Log.Warn("quota probe failed", "error", err)
+	}
 }
 
 // SendOnce builds and sends one heartbeat and returns the seat state fleetd assigned.
@@ -76,6 +94,15 @@ func (r *Reporter) SendOnce(ctx context.Context) (string, error) {
 // Failures are logged and retried on the next tick.
 func (r *Reporter) Run(ctx context.Context, interval time.Duration) {
 	last := ""
+	if r.Probe != nil {
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			every(ctx, r.ProbeEvery, func() { r.refreshQuota(ctx) })
+		}()
+		defer wg.Wait()
+	}
 	tick := func() {
 		state, err := r.SendOnce(ctx)
 		if err != nil {
@@ -89,7 +116,12 @@ func (r *Reporter) Run(ctx context.Context, interval time.Duration) {
 			last = state
 		}
 	}
-	tick()
+	every(ctx, interval, tick)
+}
+
+// every calls fn now and then every interval until ctx ends.
+func every(ctx context.Context, interval time.Duration, fn func()) {
+	fn()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -97,7 +129,7 @@ func (r *Reporter) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick()
+			fn()
 		}
 	}
 }

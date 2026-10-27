@@ -1,7 +1,7 @@
 // Command fleet-agent runs on a node as the seat's OS user.
 //
 //	fleet-agent register --fleetd URL --token TOKEN --ssh-host HOST [flags]
-//	fleet-agent run [--config PATH] [--interval 30s]
+//	fleet-agent run [--config PATH] [--interval 30s] [--quota-probe-interval 5m]
 //	fleet-agent preflight [--ssh-port 22]
 //	fleet-agent checkpoint --worktree DIR --task ID [--remote origin] [--no-ci-skip]
 //	fleet-agent host-key [--ssh-port 22]
@@ -14,10 +14,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"os/user"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -213,11 +215,17 @@ func runReporter(args []string) error {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := fs.String("config", defaultConfig, "saved registration")
 	interval := fs.Duration("interval", agent.HeartbeatInterval, "heartbeat interval")
+	probeEvery := fs.Duration("quota-probe-interval", agent.DefaultQuotaProbeInterval,
+		"how often to read the subscription quota with a one-token request (0 disables)")
+	probeModel := fs.String("quota-probe-model", agent.DefaultQuotaProbeModel, "model for the quota probe request")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *interval < time.Second {
 		return errors.New("--interval must be at least 1s")
+	}
+	if *probeEvery != 0 && *probeEvery < time.Minute {
+		return errors.New("--quota-probe-interval must be 0 or at least 1m")
 	}
 	cfg, err := agent.LoadConfig(*configPath)
 	if err != nil {
@@ -230,9 +238,42 @@ func runReporter(args []string) error {
 		Slots: agent.ProcessSlotCounter{UID: os.Getuid()},
 		Log:   slog.New(slog.NewJSONHandler(os.Stderr, nil)), Now: time.Now,
 	}
+	if *probeEvery > 0 {
+		if cfg.QuotaFile == "" {
+			return errors.New("the config has no quota_file for the quota probe; register again or pass --quota-probe-interval 0")
+		}
+		probe, err := newQuotaProbe(*probeModel)
+		if err != nil {
+			return err
+		}
+		reporter.Probe, reporter.ProbeEvery = probe, *probeEvery
+	}
 	reporter.Log.Info("fleet-agent running", "seat_id", cfg.SeatID, "fleetd", cfg.FleetdURL, "version", version)
 	reporter.Run(ctx, *interval)
 	return nil
+}
+
+func newQuotaProbe(model string) (*agent.QuotaProbe, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	return &agent.QuotaProbe{
+		HTTP: &http.Client{Timeout: 30 * time.Second}, URL: agent.DefaultQuotaProbeURL, Model: model,
+		Token: agent.SeatToken(home, loginShell()),
+	}, nil
+}
+
+// loginShell is the seat user's shell, which sshd uses for Kandev's commands.
+// Without $SHELL it falls back to the platform's default login shell.
+func loginShell() string {
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return shell
+	}
+	if runtime.GOOS == "darwin" {
+		return "/bin/zsh"
+	}
+	return "/bin/bash"
 }
 
 func preflight(args []string, stdout io.Writer) error {
@@ -245,11 +286,7 @@ func preflight(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/zsh"
-	}
-	results, ok := agent.RunChecks(context.Background(), agent.DefaultChecks(home, shell, *sshPort))
+	results, ok := agent.RunChecks(context.Background(), agent.DefaultChecks(home, loginShell(), *sshPort))
 	for _, r := range results {
 		mark := "FAIL"
 		switch {

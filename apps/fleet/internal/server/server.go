@@ -46,7 +46,9 @@ type Deps struct {
 	Handoffs HandoffAcceptor
 	// HandoffCounts adds handoff metrics.
 	HandoffCounts HandoffCounter
-	Log           *slog.Logger
+	// TaskOutcomes adds per-task metrics.
+	TaskOutcomes TaskOutcomeLister
+	Log          *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

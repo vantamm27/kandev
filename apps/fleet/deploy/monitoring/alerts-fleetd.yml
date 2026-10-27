@@ -1,0 +1,50 @@
+# vmalert / Prometheus alerting rules for the fleet.
+groups:
+  - name: fleet
+    rules:
+      - alert: FleetSeatHeartbeatMissing
+        expr: fleet_seat_heartbeat_age_seconds > 180
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Seat {{ $labels.seat }} has not sent a heartbeat for {{ $value | humanizeDuration }}"
+      - alert: FleetSeatQuota5hHigh
+        expr: fleet_seat_quota_5h_percent >= 85
+        for: 5m
+        labels: {severity: info}
+        annotations:
+          summary: "Seat {{ $labels.seat }} used {{ $value }}% of its 5-hour quota"
+      - alert: FleetSeatQuotaWeekHigh
+        expr: fleet_seat_quota_week_percent >= 85
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "Seat {{ $labels.seat }} used {{ $value }}% of its weekly quota"
+      - alert: FleetSeatInCooldown
+        expr: fleet_seat_info{state=~"cooldown_5h|cooldown_week"} == 1
+        for: 1m
+        labels: {severity: info}
+        annotations:
+          summary: "Seat {{ $labels.seat }} is in {{ $labels.state }}"
+      - alert: FleetNoUsableSeat
+        expr: sum(fleet_seats{state=~"online|busy"}) == 0
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: "No fleet seat is online"
+      - alert: FleetTasksWaiting
+        expr: sum(fleet_queue_waiting_tasks) > 0
+        for: 15m
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} task(s) have waited for a seat for 15 minutes"
+      - alert: FleetLaunchFailures
+        expr: increase(fleet_dispatch_failures_total[15m]) >= 3
+        labels: {severity: warning}
+        annotations:
+          summary: "{{ $value }} task launches failed in 15 minutes"
+      - alert: FleetTaskRunningLong
+        expr: (fleet_task_duration_seconds and on(task) fleet_task_info{outcome="running"}) > 7200
+        labels: {severity: info}
+        annotations:
+          summary: "Task {{ $labels.task }} has run for {{ $value | humanizeDuration }} on {{ $labels.seat }}"

@@ -1,0 +1,13 @@
+# vmagent / Prometheus scrape job for fleetd.
+# fleetd requires FLEET_METRICS_TOKEN as a bearer token on /metrics; store the
+# same value in the file named by bearer_token_file (mode 0600).
+scrape_configs:
+  - job_name: fleetd
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    metrics_path: /metrics
+    bearer_token_file: /etc/vmagent/secrets/fleetd-metrics-token
+    static_configs:
+      - targets: ["10.0.14.62:8484"]
+        labels:
+          env: prod

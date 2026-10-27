@@ -91,6 +91,24 @@ type AgentProfile struct {
 	ProviderAPIKeySecretID string          `json:"provider_api_key_secret_id,omitempty"`
 }
 
+// Kandev task states fleetd acts on, from pkg/api/v1/task.go.
+const (
+	TaskStateReview    = "REVIEW"
+	TaskStateCompleted = "COMPLETED"
+	TaskStateCancelled = "CANCELLED"
+	TaskStateFailed    = "FAILED"
+)
+
+// TaskDone reports whether a task in state needs no more work from its seat.
+func TaskDone(state string) bool {
+	switch state {
+	case TaskStateReview, TaskStateCompleted, TaskStateCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
 // Task is the subset of Kandev's TaskDTO fleetd uses.
 type Task struct {
 	ID                  string    `json:"id"`

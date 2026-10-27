@@ -100,15 +100,7 @@ done
 // only sshd's variables, so the parent environment cannot hide a gap.
 func checkSSHEnv(home, shell, goos string) func(context.Context) CheckResult {
 	return func(ctx context.Context) CheckResult {
-		cmd := exec.CommandContext(ctx, shell, "-c", sshEnvScript(goos))
-		cmd.Dir = home
-		// bash reads ~/.bashrc for a non-interactive command only when the
-		// SSH_CLIENT/SSH_CONNECTION variables show that sshd started it.
-		cmd.Env = []string{
-			"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath,
-			"SSH_CLIENT=127.0.0.1 0 22", "SSH_CONNECTION=127.0.0.1 0 127.0.0.1 22",
-		}
-		out, err := cmd.Output()
+		out, err := sshShellCommand(ctx, home, shell, sshEnvScript(goos)).Output()
 		detail := strings.TrimSpace(string(out))
 		if err != nil {
 			if detail == "" {
@@ -118,6 +110,20 @@ func checkSSHEnv(home, shell, goos string) func(context.Context) CheckResult {
 		}
 		return CheckResult{OK: true, Detail: "claude at " + detail + ", subscription login available"}
 	}
+}
+
+// sshShellCommand runs script in the login shell the way sshd runs a remote
+// command, with only sshd's variables. bash reads ~/.bashrc for a
+// non-interactive command only when SSH_CLIENT/SSH_CONNECTION show that sshd
+// started it.
+func sshShellCommand(ctx context.Context, home, shell, script string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, shell, "-c", script)
+	cmd.Dir = home
+	cmd.Env = []string{
+		"HOME=" + home, "SHELL=" + shell, "PATH=" + sshDefaultPath,
+		"SSH_CLIENT=127.0.0.1 0 22", "SSH_CONNECTION=127.0.0.1 0 127.0.0.1 22",
+	}
+	return cmd
 }
 
 func checkTCP(addr string) func(context.Context) CheckResult {

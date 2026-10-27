@@ -37,9 +37,6 @@ func Message(taskID string) string {
 Another member can then continue this task if this seat stops.`, taskID)
 }
 
-// doneStates are task states that need no checkpoint.
-var doneStates = map[string]bool{"REVIEW": true, "COMPLETED": true, "CANCELLED": true}
-
 // Nudger sends checkpoint nudges.
 type Nudger struct {
 	store     *store.Store
@@ -97,7 +94,7 @@ func (n *Nudger) Scan(ctx context.Context, now time.Time) (int, error) {
 
 func (n *Nudger) nudge(ctx context.Context, c store.Claim, now time.Time) bool {
 	task, err := n.tasks.GetTask(ctx, c.TaskID)
-	if err != nil || doneStates[task.State] {
+	if err != nil || kandev.TaskDone(task.State) {
 		return false
 	}
 	marked, err := n.store.MarkNudged(ctx, c.TaskID, Every, now)

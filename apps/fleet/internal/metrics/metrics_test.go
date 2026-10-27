@@ -53,6 +53,11 @@ func TestWriteSeats(t *testing.T) {
 	if strings.Index(out, `seat="seat_a"`) > strings.Index(out, `seat="seat_b"`) {
 		t.Fatal("per-seat series must be sorted by seat ID")
 	}
+	assertSampleLines(t, out)
+}
+
+func assertSampleLines(t *testing.T, out string) {
+	t.Helper()
 	sc := bufio.NewScanner(strings.NewReader(out))
 	for sc.Scan() {
 		line := sc.Text()

@@ -60,6 +60,12 @@ type LimitScanner interface {
 	Scan(ctx context.Context, now time.Time) (int, error)
 }
 
+// TaskTracker records the Kandev state of launched tasks from the round's
+// claims and the workspace tasks the round listed.
+type TaskTracker interface {
+	Track(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error
+}
+
 // Dispatcher runs dispatch rounds.
 type Dispatcher struct {
 	cfg      Config
@@ -68,9 +74,11 @@ type Dispatcher struct {
 	launcher Launcher
 	log      *slog.Logger
 	now      func() time.Time
-	// Limits and Nudges, when set, run after each round's launches.
-	Limits LimitScanner
-	Nudges LimitScanner
+	// Tracker, Nudges and Limits, when set, run in that order after each
+	// round's launches.
+	Tracker TaskTracker
+	Nudges  LimitScanner
+	Limits  LimitScanner
 
 	mu       sync.Mutex
 	last     Stats
@@ -151,7 +159,7 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	queued, err := d.intakeTasks(ctx, claims)
+	queued, listed, err := d.intakeTasks(ctx, claims)
 	if err != nil {
 		return err
 	}
@@ -188,16 +196,7 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 			stats.Failed++
 		}
 	}
-	if d.Nudges != nil {
-		if _, err := d.Nudges.Scan(ctx, d.now()); err != nil {
-			d.log.Warn("checkpoint nudge scan failed", "error", err)
-		}
-	}
-	if d.Limits != nil {
-		if _, err := d.Limits.Scan(ctx, d.now()); err != nil {
-			d.log.Warn("limit scan failed", "error", err)
-		}
-	}
+	d.postRound(ctx, claims, listed)
 	d.mu.Lock()
 	d.last = stats
 	d.launched += int64(stats.Launched)
@@ -206,27 +205,48 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	return nil
 }
 
+func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task) {
+	if d.Tracker != nil {
+		if err := d.Tracker.Track(ctx, claims, listed, d.now()); err != nil {
+			d.log.Warn("task state tracking failed", "error", err)
+		}
+	}
+	for _, scan := range []struct {
+		name    string
+		scanner LimitScanner
+	}{{"checkpoint nudge", d.Nudges}, {"limit", d.Limits}} {
+		if scan.scanner == nil {
+			continue
+		}
+		if _, err := scan.scanner.Scan(ctx, d.now()); err != nil {
+			d.log.Warn(scan.name+" scan failed", "error", err)
+		}
+	}
+}
+
 // intakeTasks lists the assigned tasks in the intake step that fleetd may
 // launch: those without a session, and those whose only session is a failed
-// launch of fleetd's own.
-func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, error) {
+// launch of fleetd's own. It also returns every workspace task it read.
+func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, map[string]kandev.Task, error) {
 	var out []kandev.Task
+	listed := map[string]kandev.Task{}
 	for page := 1; page <= maxPages; page++ {
 		res, err := d.tasks.ListWorkspaceTasks(ctx, d.cfg.WorkspaceID, kandev.ListTasksOptions{Page: page, PageSize: pageSize})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		for _, t := range res.Tasks {
+			listed[t.ID] = t
 			if t.WorkflowStepID == d.cfg.IntakeStepID && t.AssigneeUserID != "" && launchable(t, claims) {
 				out = append(out, t)
 			}
 		}
 		if len(res.Tasks) < pageSize || page*pageSize >= res.Total {
-			return out, nil
+			return out, listed, nil
 		}
 	}
 	d.log.Warn("intake listing truncated", "pages", maxPages)
-	return out, nil
+	return out, listed, nil
 }
 
 // sessionFailed is Kandev's state for a session that ended in an error.

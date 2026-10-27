@@ -29,6 +29,7 @@ import (
 	"github.com/kandev/kandev/apps/fleet/internal/server"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 	"github.com/kandev/kandev/apps/fleet/internal/sweeper"
+	"github.com/kandev/kandev/apps/fleet/internal/tasktrack"
 )
 
 const (
@@ -121,7 +122,7 @@ func serve(cfg config.Config, log *slog.Logger) error {
 	deps := server.Deps{
 		DB: db, Registrar: registry.New(db, client, identity, log), Seats: db,
 		Admin: admin.New(db, client, log), AdminToken: cfg.AdminToken,
-		Metrics: db, MetricsToken: cfg.MetricsToken, Log: log,
+		Metrics: db, MetricsToken: cfg.MetricsToken, TaskOutcomes: db, Log: log,
 	}
 	dispatchDone := startDispatcher(ctx, cfg, db, client, &deps, log)
 	defer func() {
@@ -183,6 +184,7 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
 	d.Nudges = nudge.New(db, client, launcher, log)
+	d.Tracker = tasktrack.New(db, client, log)
 	deps.Dispatch = d
 	deps.Handoffs = handoff.New(db, client, launcher, log)
 	deps.HandoffCounts = db
