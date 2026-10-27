@@ -20,6 +20,22 @@ type fakeTasks struct {
 	tasks    []kandev.Task
 	resets   []string
 	resetErr error
+	// steps maps a workflow step ID to whether it starts the agent on enter.
+	steps     map[string]bool
+	stepReads int
+}
+
+func (f *fakeTasks) GetWorkflowStep(_ context.Context, id string) (kandev.WorkflowStep, error) {
+	f.stepReads++
+	starts, ok := f.steps[id]
+	if !ok {
+		return kandev.WorkflowStep{}, &kandev.APIError{Status: 404, Message: "Step not found"}
+	}
+	step := kandev.WorkflowStep{ID: id}
+	if starts {
+		step.Events.OnEnter = []kandev.StepAction{{Type: kandev.OnEnterAutoStartAgent}}
+	}
+	return step, nil
 }
 
 func (f *fakeTasks) ResetTaskEnvironment(_ context.Context, taskID string) error {

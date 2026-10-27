@@ -35,12 +35,15 @@ type Claim struct {
 	TaskState   string
 	TaskStateAt *time.Time
 	FinishedAt  *time.Time
-	ClaimedAt   time.Time
-	UpdatedAt   time.Time
+	// ReleasedStepID is the workflow step a released task was in when fleetd
+	// freed its seat; empty for claims released before it was recorded.
+	ReleasedStepID string
+	ClaimedAt      time.Time
+	UpdatedAt      time.Time
 }
 
 const claimColumns = `c.task_id, c.seat_id, c.attempt, c.state, c.session_id, c.last_error, c.task_state, c.task_state_at,
-	c.finished_at, c.claimed_at, c.updated_at`
+	c.finished_at, c.released_step_id, c.claimed_at, c.updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
@@ -48,7 +51,7 @@ func scanClaim(row rowScanner, extra ...any) (Claim, error) {
 	var c Claim
 	var stateAt, finished sql.NullTime
 	dest := append([]any{&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.TaskState, &stateAt,
-		&finished, &c.ClaimedAt, &c.UpdatedAt}, extra...)
+		&finished, &c.ReleasedStepID, &c.ClaimedAt, &c.UpdatedAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return Claim{}, fmt.Errorf("scan claim: %w", err)
 	}
@@ -92,7 +95,7 @@ func (s *Store) BeginClaim(ctx context.Context, taskID, seatID string, now time.
 		ON CONFLICT(task_id) DO UPDATE SET seat_id = excluded.seat_id,
 			attempt = CASE WHEN dispatch_claims.state = ? THEN 1 ELSE dispatch_claims.attempt + 1 END,
 			state = excluded.state, session_id = '', last_error = '', task_state = '', task_state_at = NULL,
-			finished_at = NULL, claimed_at = excluded.claimed_at,
+			finished_at = NULL, released_step_id = '', claimed_at = excluded.claimed_at,
 			updated_at = excluded.updated_at
 		WHERE dispatch_claims.state IN (?, ?)`,
 		taskID, seatID, ClaimLaunching, now.UTC(), now.UTC(), ClaimReleased, ClaimFailed, ClaimReleased)
@@ -178,10 +181,11 @@ func (s *Store) MoveClaim(ctx context.Context, taskID, seatID, sessionID string,
 }
 
 // ReleaseClaim marks an unfinished launched claim released after fleetd
-// stopped its session to free the seat. It reports whether a claim changed.
-func (s *Store) ReleaseClaim(ctx context.Context, taskID string, now time.Time) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, finished_at = ?
-		WHERE task_id = ? AND state = ? AND finished_at IS NULL`, ClaimReleased, now.UTC(), taskID, ClaimLaunched)
+// stopped its session to free the seat, with the workflow step the task was
+// in. It reports whether a claim changed.
+func (s *Store) ReleaseClaim(ctx context.Context, taskID, stepID string, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, finished_at = ?, released_step_id = ?
+		WHERE task_id = ? AND state = ? AND finished_at IS NULL`, ClaimReleased, now.UTC(), stepID, taskID, ClaimLaunched)
 	if err != nil {
 		return false, fmt.Errorf("release claim: %w", err)
 	}
@@ -196,7 +200,7 @@ func (s *Store) ReleaseClaim(ctx context.Context, taskID string, now time.Time) 
 // own, as if fleetd had launched it on the claim's seat.
 func (s *Store) AdoptSession(ctx context.Context, taskID, sessionID string, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, session_id = ?, task_state = '',
-		task_state_at = NULL, finished_at = NULL, nudged_at = NULL, updated_at = ?
+		task_state_at = NULL, finished_at = NULL, nudged_at = NULL, released_step_id = '', updated_at = ?
 		WHERE task_id = ? AND state = ?`, ClaimLaunched, sessionID, now.UTC(), taskID, ClaimReleased)
 	if err != nil {
 		return fmt.Errorf("adopt session: %w", err)

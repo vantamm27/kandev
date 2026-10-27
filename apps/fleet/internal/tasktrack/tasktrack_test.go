@@ -141,29 +141,30 @@ func TestReleaseFreesOldestReviewSeatsForWaitingOwners(t *testing.T) {
 	tr.ReviewGrace = 5 * time.Minute
 	seatOwners := map[string]string{"seat_1": "user-a", "seat_2": "user-a"}
 
-	if err := tr.Release(ctx, map[string]int{"user-b": 3}, seatOwners, now); err != nil {
+	if err := tr.Release(ctx, map[string]int{"user-b": 3}, seatOwners, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions.stopped) != 0 {
 		t.Fatalf("no waiting task of the seats' owner, nothing to free: %v", sessions.stopped)
 	}
-	if err := tr.Release(ctx, map[string]int{"user-a": 1}, seatOwners, now); err != nil {
+	listed := map[string]kandev.Task{"task-old": {ID: "task-old", WorkflowStepID: "step-approve"}}
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, seatOwners, listed, now); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(sessions.stopped, ",") != "session-task-old" {
 		t.Fatalf("stopped = %v; want only the oldest review session", sessions.stopped)
 	}
 	claims, _ := st.ListClaims(ctx)
-	if c := claims["task-old"]; c.State != store.ClaimReleased || c.FinishedAt == nil {
+	if c := claims["task-old"]; c.State != store.ClaimReleased || c.FinishedAt == nil || c.ReleasedStepID != "step-approve" {
 		t.Fatalf("freed task's claim = %+v", c)
 	}
-	if err := tr.Release(ctx, map[string]int{"user-a": 5}, seatOwners, now); err != nil {
+	if err := tr.Release(ctx, map[string]int{"user-a": 5}, seatOwners, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Join(sessions.stopped, ",") != "session-task-old,session-task-new" {
 		t.Fatalf("stopped = %v; a review younger than the grace or a running task must keep its seat", sessions.stopped)
 	}
-	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{}, now); err != nil {
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	if len(sessions.stopped) != 2 {
@@ -178,7 +179,7 @@ func TestReleaseKeepsTheClaimWhenStoppingFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	tr := New(st, fakeTasks{}, failingSessions{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{"seat_1": "user-a"}, now); err != nil {
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{"seat_1": "user-a"}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	claims, _ := st.ListClaims(ctx)

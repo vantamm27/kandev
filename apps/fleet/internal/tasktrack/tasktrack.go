@@ -99,8 +99,10 @@ func (t *Tracker) Track(ctx context.Context, claims map[string]store.Claim, list
 // of their tasks waiting because their seats are full) it stops that many
 // sessions of tasks in REVIEW for at least ReviewGrace, oldest first, on the
 // owner's seats in seatOwners (seat ID to owner, only seats that can take
-// work). A released task can be launched again when its workflow continues.
-func (t *Tracker) Release(ctx context.Context, demand map[string]int, seatOwners map[string]string, now time.Time) error {
+// work). It records each released task's workflow step from listed, so the
+// dispatcher can launch it again when its workflow continues.
+func (t *Tracker) Release(ctx context.Context, demand map[string]int, seatOwners map[string]string,
+	listed map[string]kandev.Task, now time.Time) error {
 	if len(demand) == 0 {
 		return nil
 	}
@@ -133,7 +135,7 @@ func (t *Tracker) Release(ctx context.Context, demand map[string]int, seatOwners
 			t.log.Warn("could not stop a review session to free its seat", "task_id", c.TaskID, "session_id", c.SessionID, "error", err)
 			continue
 		}
-		if _, err := t.store.ReleaseClaim(ctx, c.TaskID, now); err != nil {
+		if _, err := t.store.ReleaseClaim(ctx, c.TaskID, listed[c.TaskID].WorkflowStepID, now); err != nil {
 			return err
 		}
 		demand[owner]--

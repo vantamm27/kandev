@@ -19,10 +19,11 @@ import (
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
-// Tasks reads Kandev tasks.
+// Tasks reads Kandev tasks and workflow steps.
 type Tasks interface {
 	ListWorkspaceTasks(ctx context.Context, workspaceID string, opts kandev.ListTasksOptions) (kandev.TaskPage, error)
 	ResetTaskEnvironment(ctx context.Context, taskID string) error
+	GetWorkflowStep(ctx context.Context, id string) (kandev.WorkflowStep, error)
 }
 
 // Launcher starts and stops Kandev sessions.
@@ -82,7 +83,7 @@ type LimitScanner interface {
 // tasks in review for owners whose queued tasks wait for a full seat.
 type TaskTracker interface {
 	Track(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error
-	Release(ctx context.Context, demand map[string]int, seatOwners map[string]string, now time.Time) error
+	Release(ctx context.Context, demand map[string]int, seatOwners map[string]string, listed map[string]kandev.Task, now time.Time) error
 }
 
 // Dispatcher runs dispatch rounds.
@@ -236,7 +237,7 @@ func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Clai
 		if err := d.Tracker.Track(ctx, claims, listed, d.now()); err != nil {
 			d.log.Warn("task state tracking failed", "error", err)
 		}
-		if err := d.Tracker.Release(ctx, demand, seatOwners, d.now()); err != nil {
+		if err := d.Tracker.Release(ctx, demand, seatOwners, listed, d.now()); err != nil {
 			d.log.Warn("freeing seats held in review failed", "error", err)
 		}
 	}
@@ -261,6 +262,7 @@ func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Clai
 func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, map[string]kandev.Task, error) {
 	var out []kandev.Task
 	listed := map[string]kandev.Task{}
+	agentSteps := map[string]bool{}
 	for page := 1; page <= maxPages; page++ {
 		res, err := d.tasks.ListWorkspaceTasks(ctx, d.cfg.WorkspaceID, kandev.ListTasksOptions{Page: page, PageSize: pageSize})
 		if err != nil {
@@ -268,7 +270,7 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 		}
 		for _, t := range res.Tasks {
 			listed[t.ID] = t
-			if d.waitsForSeat(t, claims) && launchable(t, claims) {
+			if d.waitsForSeat(ctx, t, claims, agentSteps) && launchable(t, claims) {
 				out = append(out, t)
 			}
 		}
@@ -282,11 +284,10 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 
 // waitsForSeat reports whether a task is fleetd's to run, whatever its
 // session; launchable then decides whether its session allows a launch.
-// A released task waits again only once its workflow goes on and it leaves
-// REVIEW.
-func (d *Dispatcher) waitsForSeat(t kandev.Task, claims map[string]store.Claim) bool {
-	if claims[t.ID].State == store.ClaimReleased {
-		return !kandev.TaskDone(t.State)
+// agentSteps caches, for the round, whether a step starts the agent on enter.
+func (d *Dispatcher) waitsForSeat(ctx context.Context, t kandev.Task, claims map[string]store.Claim, agentSteps map[string]bool) bool {
+	if c := claims[t.ID]; c.State == store.ClaimReleased {
+		return d.workflowWentOn(ctx, t, c, agentSteps)
 	}
 	if slices.Contains(d.cfg.IntakeStepIDs, t.WorkflowStepID) && t.AssigneeUserID != "" {
 		return true
@@ -317,6 +318,30 @@ func launchable(t kandev.Task, claims map[string]store.Claim) bool {
 	default:
 		return false
 	}
+}
+
+// workflowWentOn reports whether a released task needs its seat again: it
+// left REVIEW, or it moved from the step it was released in to a step that
+// starts the agent on enter. Kandev starts the agent for such a move itself,
+// on Kandev's own host, and the task stays in REVIEW.
+func (d *Dispatcher) workflowWentOn(ctx context.Context, t kandev.Task, c store.Claim, agentSteps map[string]bool) bool {
+	if !kandev.TaskDone(t.State) {
+		return true
+	}
+	if c.ReleasedStepID == "" || t.WorkflowStepID == c.ReleasedStepID {
+		return false
+	}
+	starts, ok := agentSteps[t.WorkflowStepID]
+	if !ok {
+		step, err := d.tasks.GetWorkflowStep(ctx, t.WorkflowStepID)
+		if err != nil {
+			d.log.Warn("cannot read a released task's workflow step", "task_id", t.ID, "step_id", t.WorkflowStepID, "error", err)
+			return false
+		}
+		starts = step.StartsAgentOnEnter()
+		agentSteps[t.WorkflowStepID] = starts
+	}
+	return starts
 }
 
 // adoptKandevSessions tracks the live sessions Kandev started on its own for

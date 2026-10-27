@@ -21,7 +21,7 @@ func (r recordingTracker) Track(_ context.Context, _ map[string]store.Claim, lis
 	return nil
 }
 
-func (r recordingTracker) Release(context.Context, map[string]int, map[string]string, time.Time) error {
+func (r recordingTracker) Release(context.Context, map[string]int, map[string]string, map[string]kandev.Task, time.Time) error {
 	*r.order = append(*r.order, "release")
 	return nil
 }

@@ -97,7 +97,7 @@ func releasedFixture(t *testing.T) (*store.Store, *fakeTasks, *fakeLauncher, *Di
 	if err := st.FinishClaim(ctx, "t-plan", store.ClaimLaunched, "sess-plan", "", t0); err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := st.ReleaseClaim(ctx, "t-plan", t0); err != nil || !ok {
+	if ok, err := st.ReleaseClaim(ctx, "t-plan", "step-approve", t0); err != nil || !ok {
 		t.Fatalf("release: %v, %v", ok, err)
 	}
 	return st, tasks, launcher, d, clock
@@ -130,13 +130,35 @@ func TestReleasedTaskContinuesOnItsSeat(t *testing.T) {
 
 func TestReleasedTaskStillInReviewWaits(t *testing.T) {
 	_, tasks, launcher, d, _ := releasedFixture(t)
+	tasks.steps = map[string]bool{"step-approve": false, "step-done": false}
 	review := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
-	tasks.tasks = []kandev.Task{review}
+	for _, step := range []string{"step-approve", "step-done"} {
+		review.WorkflowStepID = step
+		tasks.tasks = []kandev.Task{review}
+		if err := d.Round(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(launcher.calls) != 0 {
+		t.Fatalf("calls = %+v; a released task in review, in its step or a step without an agent, needs no seat", launcher.calls)
+	}
+}
+
+// Kandev starts the agent of a task that enters an auto_start_agent step with
+// no live session itself, on the task's own executor (Kandev's host), and the
+// task stays in REVIEW. Entering such a step is what makes a released task
+// fleetd's to run again.
+func TestReleasedTaskMovedToAnAgentStepRunsAgain(t *testing.T) {
+	_, tasks, launcher, d, _ := releasedFixture(t)
+	tasks.steps = map[string]bool{"step-implement": true}
+	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
+	moved.WorkflowStepID = "step-implement"
+	tasks.tasks = []kandev.Task{moved}
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.calls) != 0 {
-		t.Fatalf("calls = %+v; a released task still in review needs no seat", launcher.calls)
+	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" {
+		t.Fatalf("calls = %+v; want a relaunch on seat a1", launcher.calls)
 	}
 }
 

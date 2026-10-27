@@ -84,4 +84,7 @@ var migrations = []string{
 	UPDATE dispatch_claims SET state = 'released'
 		WHERE state = 'launched' AND task_state = 'REVIEW' AND finished_at IS NOT NULL;
 	`,
+	`
+	ALTER TABLE dispatch_claims ADD COLUMN released_step_id TEXT NOT NULL DEFAULT '';
+	`,
 }
