@@ -130,10 +130,19 @@ A session in `REVIEW` still holds its seat. When a queued task of the same
 owner waits with `seats_full`, fleetd stops the session of the task that has
 been in `REVIEW` longest, at least `FLEET_REVIEW_GRACE`, one per waiting task,
 and marks its claim `released`. The grace keeps a session whose step moves on
-by itself (`on_turn_complete`) after passing `REVIEW`. When a released task
-leaves `REVIEW` again, fleetd adopts the session if Kandev started one, or
-else launches a new session on the same seat; the conversation then starts
-fresh, while the task directory on the seat is kept.
+by itself (`on_turn_complete`) after passing `REVIEW`.
+
+A released task needs its seat again when it leaves `REVIEW`, or when it moves
+to another step with `auto_start_agent`. If Kandev started a live session for
+it, fleetd adopts that session. Otherwise fleetd launches a new session on the
+seat the task was released from, with the step's prompt. For a move into an
+`auto_start_agent` step, Kandev first starts the agent on its own host, which
+fails with "Authentication required" and builds the task environment there;
+fleetd stops that session and resets the task environment before launching
+on the seat. The failed host session stays listed in the task. The new
+session starts a fresh conversation; files from the earlier session stay on
+the seat but are not reattached, so agents should commit or push their work
+at the end of each step.
 
 Rules for a workflow that fleetd runs:
 
