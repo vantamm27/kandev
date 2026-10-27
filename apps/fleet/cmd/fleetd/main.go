@@ -167,7 +167,7 @@ func serve(cfg config.Config, log *slog.Logger) error {
 // configured. The returned channel closes once it has stopped.
 func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, client *kandev.Client, deps *server.Deps, log *slog.Logger) <-chan struct{} {
 	done := make(chan struct{})
-	if cfg.WorkspaceID == "" || cfg.IntakeStepID == "" {
+	if cfg.WorkspaceID == "" || len(cfg.IntakeStepIDs) == 0 {
 		log.Warn("dispatcher disabled: set FLEET_WORKSPACE_ID and FLEET_INTAKE_STEP_ID")
 		close(done)
 		return done
@@ -178,13 +178,18 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 		close(done)
 		return done
 	}
+	for _, warning := range intakeStepWarnings(ctx, client, cfg.IntakeStepIDs) {
+		log.Warn(warning)
+	}
 	launcher := kandev.NewLauncher(cfg.KandevURL, cfg.KandevToken)
 	d := dispatch.New(dispatch.Config{
-		WorkspaceID: cfg.WorkspaceID, IntakeStepID: cfg.IntakeStepID, AgentProfileID: agentProfileID,
+		WorkspaceID: cfg.WorkspaceID, IntakeStepIDs: cfg.IntakeStepIDs, AgentProfileID: agentProfileID,
 	}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
 	d.Nudges = nudge.New(db, client, launcher, log)
-	d.Tracker = tasktrack.New(db, client, launcher, log)
+	tracker := tasktrack.New(db, client, launcher, log)
+	tracker.ReviewGrace = cfg.ReviewGrace
+	d.Tracker = tracker
 	deps.Dispatch = d
 	deps.Rounds = d
 	deps.Handoffs = handoff.New(db, client, launcher, log)
@@ -192,7 +197,7 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	go func() {
 		defer close(done)
 		defer func() { _ = launcher.Close() }()
-		log.Info("dispatcher running", "workspace_id", cfg.WorkspaceID, "intake_step_id", cfg.IntakeStepID,
+		log.Info("dispatcher running", "workspace_id", cfg.WorkspaceID, "intake_step_ids", cfg.IntakeStepIDs,
 			"agent_profile_id", agentProfileID, "interval", cfg.DispatchInterval.String())
 		d.Run(ctx, cfg.DispatchInterval)
 	}()
@@ -233,6 +238,27 @@ func resolveAgentProfile(ctx context.Context, cfg config.Config, kandevAPI works
 		return "", fmt.Errorf("agent profile %s (%s) %s; seats run on subscription logins, so use a profile without it", id, profile.Name, reason)
 	}
 	return id, nil
+}
+
+type stepReader interface {
+	GetWorkflowStep(ctx context.Context, id string) (kandev.WorkflowStep, error)
+}
+
+// intakeStepWarnings checks the intake steps. A step that starts the agent on
+// enter makes Kandev launch a new task on the task's own executor before
+// fleetd sees it, so its tasks never reach a seat.
+func intakeStepWarnings(ctx context.Context, steps stepReader, ids []string) []string {
+	var out []string
+	for _, id := range ids {
+		step, err := steps.GetWorkflowStep(ctx, id)
+		switch {
+		case err != nil:
+			out = append(out, fmt.Sprintf("cannot read intake step %s: %v", id, err))
+		case step.StartsAgentOnEnter():
+			out = append(out, fmt.Sprintf("intake step %s (%s) has auto_start_agent; Kandev starts its tasks before fleetd can place them on a seat, so remove the action", id, step.Name))
+		}
+	}
+	return out
 }
 
 func apiBilling(p kandev.AgentProfile) string {

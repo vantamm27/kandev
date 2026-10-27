@@ -21,6 +21,11 @@ func (r recordingTracker) Track(_ context.Context, _ map[string]store.Claim, lis
 	return nil
 }
 
+func (r recordingTracker) Release(context.Context, map[string]int, map[string]string, time.Time) error {
+	*r.order = append(*r.order, "release")
+	return nil
+}
+
 type recordingScanner struct {
 	name  string
 	order *[]string
@@ -42,7 +47,7 @@ func TestRoundTracksTasksFirstAndRunsEveryScan(t *testing.T) {
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatalf("Round: %v", err)
 	}
-	if strings.Join(order, ",") != "tracker,nudges,limits" {
-		t.Fatalf("post-round order = %v; the tracker runs first with the round's listing, then every scan even after a failure", order)
+	if strings.Join(order, ",") != "tracker,release,nudges,limits" {
+		t.Fatalf("post-round order = %v; the tracker runs first with the round's listing and frees seats, then every scan even after a failure", order)
 	}
 }

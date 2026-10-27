@@ -83,10 +83,12 @@ func TestTrackRecordsStatesAndFinishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if o := got["task-run"]; o.TaskState != "IN_PROGRESS" || o.FinishedAt != nil {
-		t.Errorf("running task = %+v", o)
+	for id, state := range map[string]string{"task-run": "IN_PROGRESS", "task-review": "REVIEW"} {
+		if o := got[id]; o.TaskState != state || o.FinishedAt != nil {
+			t.Errorf("%s = %+v, want unfinished in %s", id, o, state)
+		}
 	}
-	for id, state := range map[string]string{"task-review": "REVIEW", "task-gone": StateDeleted, "task-failed": "FAILED"} {
+	for id, state := range map[string]string{"task-gone": StateDeleted, "task-failed": "FAILED"} {
 		if o := got[id]; o.TaskState != state || o.FinishedAt == nil {
 			t.Errorf("%s = %+v, want finished as %s", id, o, state)
 		}
@@ -95,8 +97,8 @@ func TestTrackRecordsStatesAndFinishes(t *testing.T) {
 		t.Errorf("unreadable task must be left for the next round: %+v", o)
 	}
 	sort.Strings(sessions.stopped)
-	if strings.Join(sessions.stopped, ",") != "session-task-failed,session-task-review" {
-		t.Errorf("stopped sessions = %v; want the finished tasks' sessions, not the deleted or running ones", sessions.stopped)
+	if strings.Join(sessions.stopped, ",") != "session-task-failed" {
+		t.Errorf("stopped sessions = %v; want the ended task's session, not the deleted, running, or review ones", sessions.stopped)
 	}
 	sessions.stopped = nil
 	claims, _ = st.ListClaims(context.Background())
@@ -106,4 +108,87 @@ func TestTrackRecordsStatesAndFinishes(t *testing.T) {
 	if len(sessions.stopped) != 0 {
 		t.Errorf("a finished task's session must be stopped once, got %v", sessions.stopped)
 	}
+}
+
+func TestReleaseFreesOldestReviewSeatsForWaitingOwners(t *testing.T) {
+	ctx := context.Background()
+	st := launchedStore(t, "task-old", "task-new", "task-fresh", "task-run")
+	// launchedStore claims every task on seat_1; spread them over two seats.
+	if err := st.CreateToken(ctx, "tok2", store.RegistrationToken{OwnerUserID: "user-a", ExpiresAt: now.Add(time.Hour)}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RegisterSeat(ctx, "tok2", store.Seat{ID: "seat_2", OwnerUserID: "user-a", SSHHost: "h2", SSHPort: 22,
+		SSHUser: "u", HostKeyFingerprint: "SHA256:y", Capacity: 1, HMACSecret: "s", State: store.SeatOnline}, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MoveClaim(ctx, "task-new", "seat_2", "session-task-new", now); err != nil {
+		t.Fatal(err)
+	}
+	for id, at := range map[string]time.Time{
+		"task-old":   now.Add(-time.Hour),
+		"task-new":   now.Add(-30 * time.Minute),
+		"task-fresh": now.Add(-time.Minute),
+	} {
+		if err := st.RecordTaskState(ctx, id, "REVIEW", false, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := st.RecordTaskState(ctx, "task-run", "IN_PROGRESS", false, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	sessions := &fakeSessions{}
+	tr := New(st, fakeTasks{}, sessions, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	tr.ReviewGrace = 5 * time.Minute
+	seatOwners := map[string]string{"seat_1": "user-a", "seat_2": "user-a"}
+
+	if err := tr.Release(ctx, map[string]int{"user-b": 3}, seatOwners, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.stopped) != 0 {
+		t.Fatalf("no waiting task of the seats' owner, nothing to free: %v", sessions.stopped)
+	}
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, seatOwners, now); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(sessions.stopped, ",") != "session-task-old" {
+		t.Fatalf("stopped = %v; want only the oldest review session", sessions.stopped)
+	}
+	claims, _ := st.ListClaims(ctx)
+	if c := claims["task-old"]; c.State != store.ClaimReleased || c.FinishedAt == nil {
+		t.Fatalf("freed task's claim = %+v", c)
+	}
+	if err := tr.Release(ctx, map[string]int{"user-a": 5}, seatOwners, now); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(sessions.stopped, ",") != "session-task-old,session-task-new" {
+		t.Fatalf("stopped = %v; a review younger than the grace or a running task must keep its seat", sessions.stopped)
+	}
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{}, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.stopped) != 2 {
+		t.Fatalf("a seat that cannot take work (cooling down, draining) must not be freed: %v", sessions.stopped)
+	}
+}
+
+func TestReleaseKeepsTheClaimWhenStoppingFails(t *testing.T) {
+	ctx := context.Background()
+	st := launchedStore(t, "task-1")
+	if err := st.RecordTaskState(ctx, "task-1", "REVIEW", false, now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	tr := New(st, fakeTasks{}, failingSessions{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := tr.Release(ctx, map[string]int{"user-a": 1}, map[string]string{"seat_1": "user-a"}, now); err != nil {
+		t.Fatal(err)
+	}
+	claims, _ := st.ListClaims(ctx)
+	if c := claims["task-1"]; c.State != store.ClaimLaunched || c.FinishedAt != nil {
+		t.Fatalf("a session that is still running must keep its claim: %+v", c)
+	}
+}
+
+type failingSessions struct{}
+
+func (failingSessions) StopSession(context.Context, string, string) error {
+	return errors.New("kandev unreachable")
 }

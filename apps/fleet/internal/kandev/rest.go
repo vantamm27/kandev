@@ -79,6 +79,15 @@ func (c *Client) GetWorkspace(ctx context.Context, id string) (Workspace, error)
 	return out, err
 }
 
+// GetWorkflowStep reads one workflow step.
+func (c *Client) GetWorkflowStep(ctx context.Context, id string) (WorkflowStep, error) {
+	var out struct {
+		Step WorkflowStep `json:"step"`
+	}
+	err := c.do(ctx, http.MethodGet, "/api/v1/workflow/steps/"+url.PathEscape(id), nil, &out)
+	return out.Step, err
+}
+
 // GetAgentProfile finds an agent profile by ID in Kandev's agent list.
 func (c *Client) GetAgentProfile(ctx context.Context, id string) (AgentProfile, error) {
 	var out struct {

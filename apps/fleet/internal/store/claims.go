@@ -13,6 +13,9 @@ const (
 	ClaimLaunching = "launching"
 	ClaimLaunched  = "launched"
 	ClaimFailed    = "failed"
+	// ClaimReleased: fleetd stopped the task's session to free its seat
+	// while the task waited in REVIEW; the task may be launched again.
+	ClaimReleased = "released"
 )
 
 // ErrAlreadyClaimed means the task has a launching or launched claim.
@@ -27,31 +30,39 @@ type Claim struct {
 	SessionID string
 	LastError string
 	// TaskState is the Kandev task state fleetd last saw for a launched
-	// task, and FinishedAt when it first saw the task finished.
-	TaskState  string
-	FinishedAt *time.Time
-	ClaimedAt  time.Time
-	UpdatedAt  time.Time
+	// task, TaskStateAt when it first saw that state, and FinishedAt when it
+	// first saw the task finished or released it.
+	TaskState   string
+	TaskStateAt *time.Time
+	FinishedAt  *time.Time
+	ClaimedAt   time.Time
+	UpdatedAt   time.Time
 }
 
-const claimColumns = `c.task_id, c.seat_id, c.attempt, c.state, c.session_id, c.last_error, c.task_state, c.finished_at,
-	c.claimed_at, c.updated_at`
+const claimColumns = `c.task_id, c.seat_id, c.attempt, c.state, c.session_id, c.last_error, c.task_state, c.task_state_at,
+	c.finished_at, c.claimed_at, c.updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanClaim(row rowScanner, extra ...any) (Claim, error) {
 	var c Claim
-	var finished sql.NullTime
-	dest := append([]any{&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.TaskState, &finished,
-		&c.ClaimedAt, &c.UpdatedAt}, extra...)
+	var stateAt, finished sql.NullTime
+	dest := append([]any{&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.TaskState, &stateAt,
+		&finished, &c.ClaimedAt, &c.UpdatedAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return Claim{}, fmt.Errorf("scan claim: %w", err)
 	}
-	if finished.Valid {
-		t := finished.Time
-		c.FinishedAt = &t
-	}
+	c.TaskStateAt = nullTime(stateAt)
+	c.FinishedAt = nullTime(finished)
 	return c, nil
+}
+
+func nullTime(t sql.NullTime) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	v := t.Time
+	return &v
 }
 
 // ListClaims returns every claim keyed by task ID.
@@ -73,17 +84,18 @@ func (s *Store) ListClaims(ctx context.Context) (map[string]Claim, error) {
 }
 
 // BeginClaim claims a task for a seat. A new task gets attempt 1; a failed
-// claim is retried with the next attempt number. A launching or launched
-// claim is never taken over.
+// claim is retried with the next attempt number, and a released claim starts
+// over at attempt 1. A launching or launched claim is never taken over.
 func (s *Store) BeginClaim(ctx context.Context, taskID, seatID string, now time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx, `INSERT INTO dispatch_claims (task_id, seat_id, attempt, state, claimed_at, updated_at)
 		VALUES (?, ?, 1, ?, ?, ?)
-		ON CONFLICT(task_id) DO UPDATE SET seat_id = excluded.seat_id, attempt = dispatch_claims.attempt + 1,
-			state = excluded.state, session_id = '', last_error = '', task_state = '', finished_at = NULL,
-			claimed_at = excluded.claimed_at,
+		ON CONFLICT(task_id) DO UPDATE SET seat_id = excluded.seat_id,
+			attempt = CASE WHEN dispatch_claims.state = ? THEN 1 ELSE dispatch_claims.attempt + 1 END,
+			state = excluded.state, session_id = '', last_error = '', task_state = '', task_state_at = NULL,
+			finished_at = NULL, claimed_at = excluded.claimed_at,
 			updated_at = excluded.updated_at
-		WHERE dispatch_claims.state = ?`,
-		taskID, seatID, ClaimLaunching, now.UTC(), now.UTC(), ClaimFailed)
+		WHERE dispatch_claims.state IN (?, ?)`,
+		taskID, seatID, ClaimLaunching, now.UTC(), now.UTC(), ClaimReleased, ClaimFailed, ClaimReleased)
 	if err != nil {
 		return 0, fmt.Errorf("begin claim: %w", err)
 	}
@@ -161,6 +173,36 @@ func (s *Store) MoveClaim(ctx context.Context, taskID, seatID, sessionID string,
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return fmt.Errorf("move claim %s: no claim", taskID)
+	}
+	return nil
+}
+
+// ReleaseClaim marks an unfinished launched claim released after fleetd
+// stopped its session to free the seat. It reports whether a claim changed.
+func (s *Store) ReleaseClaim(ctx context.Context, taskID string, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, finished_at = ?
+		WHERE task_id = ? AND state = ? AND finished_at IS NULL`, ClaimReleased, now.UTC(), taskID, ClaimLaunched)
+	if err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("release claim: %w", err)
+	}
+	return n == 1, nil
+}
+
+// AdoptSession tracks a session Kandev started for a released task on its
+// own, as if fleetd had launched it on the claim's seat.
+func (s *Store) AdoptSession(ctx context.Context, taskID, sessionID string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, session_id = ?, task_state = '',
+		task_state_at = NULL, finished_at = NULL, nudged_at = NULL, updated_at = ?
+		WHERE task_id = ? AND state = ?`, ClaimLaunched, sessionID, now.UTC(), taskID, ClaimReleased)
+	if err != nil {
+		return fmt.Errorf("adopt session: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("adopt session for %s: no released claim", taskID)
 	}
 	return nil
 }

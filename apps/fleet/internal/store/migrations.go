@@ -78,4 +78,10 @@ var migrations = []string{
 	ALTER TABLE dispatch_claims ADD COLUMN task_state TEXT NOT NULL DEFAULT '';
 	ALTER TABLE dispatch_claims ADD COLUMN finished_at TIMESTAMP;
 	`,
+	`
+	ALTER TABLE dispatch_claims ADD COLUMN task_state_at TIMESTAMP;
+	-- Earlier versions stopped a task's session as soon as it reached REVIEW.
+	UPDATE dispatch_claims SET state = 'released'
+		WHERE state = 'launched' AND task_state = 'REVIEW' AND finished_at IS NOT NULL;
+	`,
 }

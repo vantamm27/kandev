@@ -75,19 +75,22 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 | `FLEET_ADMIN_TOKEN` | empty | Bearer token for `/v1/admin`; empty disables the admin API. |
 | `FLEET_METRICS_TOKEN` | empty | Bearer token required on `/metrics`; empty leaves it open (keep fleetd inside the VPN). |
 | `FLEET_WORKSPACE_ID` | empty | Kandev workspace the dispatcher reads tasks from. |
-| `FLEET_INTAKE_STEP_ID` | empty | Workflow step where tasks wait for a seat; with this or the workspace empty, the dispatcher does not run. |
+| `FLEET_INTAKE_STEP_ID` | empty | Workflow steps where tasks wait for a seat, comma-separated (one per workflow); with this or the workspace empty, the dispatcher does not run. |
 | `FLEET_AGENT_PROFILE_ID` | empty | Kandev agent profile dispatched sessions run; empty uses the workspace's default agent profile. |
 | `FLEET_DISPATCH_INTERVAL` | `20s` | Time between dispatch rounds. |
+| `FLEET_REVIEW_GRACE` | `5m` | How long a task stays in `REVIEW` before fleetd may stop its session to free the seat for a queued task. |
 
 ## Dispatching
 
 Each round fleetd lists the workspace's tasks and picks those waiting for a
 seat:
 
-- tasks in the intake step with a human assignee, and
+- tasks in an intake step with a human assignee,
 - tasks created with the fleet agent profile (`FLEET_AGENT_PROFILE_ID`) and not
   started, in any step. In the web UI: pick that profile, choose **Create
-  without starting agent**, then **Assign to me** in the task's top bar.
+  without starting agent**, then **Assign to me** in the task's top bar, and
+- released tasks (see [Custom workflows](#custom-workflows)) whose workflow
+  went on, pinned to the seat that holds their environment.
 
 A task waits only if it has no session, or its only session is fleetd's own
 failed launch, or a session that never sent a prompt. The web UI prepares such
@@ -115,20 +118,46 @@ After each round fleetd also:
   5-hour waits are left to the Kandev dynamic profile. Accept with
   `POST /v1/admin/handoffs/{id}/accept`.
 
+## Custom workflows
+
+Kandev sets a task to `REVIEW` after every agent turn, not only at the end of
+its workflow, and a move to another step keeps the task's live session. fleetd
+therefore keeps a session through `REVIEW`, so a person can reply, or move the
+task to the next agent step, and the work goes on in the same session on the
+same seat.
+
+A session in `REVIEW` still holds its seat. When a queued task of the same
+owner waits with `seats_full`, fleetd stops the session of the task that has
+been in `REVIEW` longest, at least `FLEET_REVIEW_GRACE`, one per waiting task,
+and marks its claim `released`. The grace keeps a session whose step moves on
+by itself (`on_turn_complete`) after passing `REVIEW`. When a released task
+leaves `REVIEW` again, fleetd adopts the session if Kandev started one, or
+else launches a new session on the same seat; the conversation then starts
+fresh, while the task directory on the seat is kept.
+
+Rules for a workflow that fleetd runs:
+
+- The intake step must not have `auto_start_agent`; Kandev would start the
+  task on its own executor first. fleetd logs a warning at startup when it
+  does.
+- Later steps may use `auto_start_agent`, `on_turn_complete` moves, and
+  human gates.
+- Put each workflow's intake step in `FLEET_INTAKE_STEP_ID`, or create its
+  tasks with the fleet agent profile.
+
 ## Monitoring
 
 After each dispatch round fleetd reads the Kandev state of every launched task
-it has not yet seen finish (`REVIEW`, `COMPLETED`, `CANCELLED`, `FAILED`, or
-deleted) and records it with the time it finished. When a task finishes it
-sends `session.stop` for fleetd's session once: a session waiting for input
-keeps agentctl running and the seat full. The stopped session is `CANCELLED`
-and Kandev does not resume it; its transcript and the task directory on the
-seat stay, and a person continues the task with a new session.
-`/metrics` reports:
+it has not yet seen end (`COMPLETED`, `CANCELLED`, `FAILED`, or deleted) and
+records it with the time it ended. When a task ends fleetd sends
+`session.stop` for its session once: a session waiting for input keeps
+agentctl running and the seat full. The stopped session is `CANCELLED` and
+Kandev does not resume it; its transcript and the task directory on the seat
+stay. `/metrics` reports:
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |
-| `fleet_tasks` | `seat`, `owner`, `outcome` | Tasks launched since the fleet database was created. `outcome` is `launching`, `running`, `launch_failed`, or the finished Kandev state in lower case (`review`, `completed`, `cancelled`, `failed`, `deleted`). |
+| `fleet_tasks` | `seat`, `owner`, `outcome` | Tasks launched since the fleet database was created. `outcome` is `launching`, `running` (including a task in `REVIEW` that keeps its session), `released`, `launch_failed`, or the ended Kandev state in lower case (`completed`, `cancelled`, `failed`, `deleted`). |
 | `fleet_task_info` | `task`, `seat`, `owner`, `state`, `outcome`, `attempt` | One series (value 1) per task running now or finished in the last 24 h; `state` is the last Kandev task state. |
 | `fleet_task_duration_seconds` | `task`, `seat`, `owner` | Launch to finish, or launch to now while running. |
 

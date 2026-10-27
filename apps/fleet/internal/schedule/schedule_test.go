@@ -182,3 +182,17 @@ func TestUnassignedTaskWaits(t *testing.T) {
 		t.Fatalf("plan = %+v", plan)
 	}
 }
+
+func TestPinnedTaskRunsOnlyOnItsSeat(t *testing.T) {
+	pinned := task("t", "a", PriorityHigh, 0)
+	pinned.SeatID = "s-env"
+	seats := []Seat{seat("s-env", "a", 1), seat("s-roomy", "a", 4)}
+	if got := assigned(Schedule([]Task{pinned}, seats, now, DefaultPolicy()))["t"]; got != "s-env" {
+		t.Fatalf("pinned task assigned to %q, want s-env", got)
+	}
+	seats[0].FreeSlots = 0
+	plan := Schedule([]Task{pinned}, seats, now, DefaultPolicy())
+	if len(plan.Assignments) != 0 || waiting(plan)["t"] != ReasonFull {
+		t.Fatalf("plan = %+v; a pinned task waits for its own seat", plan)
+	}
+}

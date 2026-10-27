@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -17,7 +18,8 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.ListenAddr != ":8484" || cfg.DBPath != "fleet.db" || cfg.HeartbeatTimeout != 90*time.Second || cfg.DispatchInterval != 20*time.Second {
+	if cfg.ListenAddr != ":8484" || cfg.DBPath != "fleet.db" || cfg.HeartbeatTimeout != 90*time.Second || cfg.DispatchInterval != 20*time.Second ||
+		cfg.ReviewGrace != 5*time.Minute || cfg.IntakeStepIDs != nil {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 	if cfg.KandevURL != "" || cfg.KandevToken != "" {
@@ -39,9 +41,9 @@ func TestOverridesAndTrimming(t *testing.T) {
 	want := Config{
 		ListenAddr: "127.0.0.1:9000", DBPath: "/var/lib/fleet/fleet.db",
 		KandevURL: "https://kandev.internal", KandevToken: "kandev_pat_x", HeartbeatTimeout: 2 * time.Minute,
-		DispatchInterval: 20 * time.Second,
+		DispatchInterval: 20 * time.Second, ReviewGrace: 5 * time.Minute,
 	}
-	if cfg != want {
+	if !reflect.DeepEqual(cfg, want) {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}
 }
@@ -56,6 +58,8 @@ func TestRejectsInvalidValues(t *testing.T) {
 		"unknown identity":  {"FLEET_SSH_IDENTITY_SOURCE": "password"},
 		"file without path": {"FLEET_SSH_IDENTITY_SOURCE": "file"},
 		"tiny interval":     {"FLEET_DISPATCH_INTERVAL": "10ms"},
+		"bad review grace":  {"FLEET_REVIEW_GRACE": "later"},
+		"negative grace":    {"FLEET_REVIEW_GRACE": "-1m"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := fromLookup(lookupFrom(values)); err == nil {
@@ -77,6 +81,15 @@ func TestSSHIdentityFile(t *testing.T) {
 func TestAgentProfileOverride(t *testing.T) {
 	cfg, err := fromLookup(lookupFrom(map[string]string{"FLEET_AGENT_PROFILE_ID": " agent-1 "}))
 	if err != nil || cfg.AgentProfileID != "agent-1" {
+		t.Fatalf("cfg = %+v, %v", cfg, err)
+	}
+}
+
+func TestIntakeStepListAndReviewGrace(t *testing.T) {
+	cfg, err := fromLookup(lookupFrom(map[string]string{
+		"FLEET_INTAKE_STEP_ID": " step-a, ,step-b ", "FLEET_REVIEW_GRACE": "0s",
+	}))
+	if err != nil || !reflect.DeepEqual(cfg.IntakeStepIDs, []string{"step-a", "step-b"}) || cfg.ReviewGrace != 0 {
 		t.Fatalf("cfg = %+v, %v", cfg, err)
 	}
 }

@@ -30,15 +30,19 @@ type Config struct {
 	AdminToken string
 	// MetricsToken, when set, is required to scrape /metrics.
 	MetricsToken string
-	// WorkspaceID and IntakeStepID select the tasks fleetd dispatches; with
-	// either empty the dispatcher does not run.
-	WorkspaceID  string
-	IntakeStepID string
+	// WorkspaceID and IntakeStepIDs select the tasks fleetd dispatches; with
+	// either empty the dispatcher does not run. FLEET_INTAKE_STEP_ID takes a
+	// comma-separated list, one intake step per workflow.
+	WorkspaceID   string
+	IntakeStepIDs []string
 	// AgentProfileID is the Kandev agent profile dispatched sessions run;
 	// empty means the workspace's default agent profile.
 	AgentProfileID string
 	// DispatchInterval is the time between dispatch rounds.
 	DispatchInterval time.Duration
+	// ReviewGrace is how long a task stays in REVIEW before fleetd may stop
+	// its session to free the seat for a queued task.
+	ReviewGrace time.Duration
 }
 
 const (
@@ -46,6 +50,7 @@ const (
 	defaultDBPath           = "fleet.db"
 	defaultHeartbeatTimeout = 90 * time.Second
 	defaultDispatchInterval = 20 * time.Second
+	defaultReviewGrace      = 5 * time.Minute
 )
 
 // FromEnv reads the configuration from FLEET_* environment variables.
@@ -71,7 +76,7 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		AdminToken:        get("FLEET_ADMIN_TOKEN", ""),
 		MetricsToken:      get("FLEET_METRICS_TOKEN", ""),
 		WorkspaceID:       get("FLEET_WORKSPACE_ID", ""),
-		IntakeStepID:      get("FLEET_INTAKE_STEP_ID", ""),
+		IntakeStepIDs:     splitList(get("FLEET_INTAKE_STEP_ID", "")),
 		AgentProfileID:    get("FLEET_AGENT_PROFILE_ID", ""),
 	}
 	interval, err := time.ParseDuration(get("FLEET_DISPATCH_INTERVAL", defaultDispatchInterval.String()))
@@ -79,6 +84,11 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		return Config{}, fmt.Errorf("FLEET_DISPATCH_INTERVAL must be a duration of at least 1s, got %q", get("FLEET_DISPATCH_INTERVAL", ""))
 	}
 	cfg.DispatchInterval = interval
+	grace, err := time.ParseDuration(get("FLEET_REVIEW_GRACE", defaultReviewGrace.String()))
+	if err != nil || grace < 0 {
+		return Config{}, fmt.Errorf("FLEET_REVIEW_GRACE must be a non-negative duration, got %q", get("FLEET_REVIEW_GRACE", ""))
+	}
+	cfg.ReviewGrace = grace
 	switch cfg.SSHIdentitySource {
 	case "", "agent":
 	case "file":
@@ -103,4 +113,15 @@ func fromLookup(lookup func(string) (string, bool)) (Config, error) {
 		}
 	}
 	return cfg, nil
+}
+
+// splitList splits a comma-separated value, dropping empty items.
+func splitList(v string) []string {
+	var out []string
+	for _, item := range strings.Split(v, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

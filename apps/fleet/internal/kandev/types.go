@@ -100,10 +100,15 @@ const (
 )
 
 // Kandev session states fleetd acts on: a session that ended in an error,
-// and one that was prepared but never sent a prompt.
+// one that was stopped, one that was prepared but never sent a prompt, and
+// the states of a session whose agent is alive.
 const (
-	SessionStateFailed  = "FAILED"
-	SessionStateCreated = "CREATED"
+	SessionStateFailed          = "FAILED"
+	SessionStateCancelled       = "CANCELLED"
+	SessionStateCreated         = "CREATED"
+	SessionStateStarting        = "STARTING"
+	SessionStateRunning         = "RUNNING"
+	SessionStateWaitingForInput = "WAITING_FOR_INPUT"
 )
 
 // TaskDone reports whether a task in state needs no more work from its seat.
@@ -133,6 +138,13 @@ type Task struct {
 	UpdatedAt           time.Time `json:"updated_at"`
 	// PrimaryAgentProfileID is the agent profile the task was created with.
 	PrimaryAgentProfileID string `json:"primary_agent_profile_id,omitempty"`
+}
+
+// PrimarySessionLive reports whether the task's primary session has a live
+// agent.
+func (t Task) PrimarySessionLive() bool {
+	return t.PrimarySessionIs(SessionStateStarting) || t.PrimarySessionIs(SessionStateRunning) ||
+		t.PrimarySessionIs(SessionStateWaitingForInput)
 }
 
 // PrimarySessionIs reports whether the task's primary session is in state.
@@ -181,4 +193,35 @@ type LaunchSessionResult struct {
 	AgentExecutionID string `json:"agent_execution_id,omitempty"`
 	AgentProfileID   string `json:"agent_profile_id,omitempty"`
 	State            string `json:"state"`
+}
+
+// OnEnterAutoStartAgent is the workflow step action that starts the agent
+// when a task enters the step.
+const OnEnterAutoStartAgent = "auto_start_agent"
+
+// StepAction is one action of a workflow step event.
+type StepAction struct {
+	Type string `json:"type"`
+}
+
+// StepEvents holds the workflow step events fleetd checks.
+type StepEvents struct {
+	OnEnter []StepAction `json:"on_enter,omitempty"`
+}
+
+// WorkflowStep is the subset of Kandev's workflow step fleetd checks.
+type WorkflowStep struct {
+	ID     string     `json:"id"`
+	Name   string     `json:"name"`
+	Events StepEvents `json:"events"`
+}
+
+// StartsAgentOnEnter reports whether entering the step starts the agent.
+func (s WorkflowStep) StartsAgentOnEnter() bool {
+	for _, a := range s.Events.OnEnter {
+		if a.Type == OnEnterAutoStartAgent {
+			return true
+		}
+	}
+	return false
 }

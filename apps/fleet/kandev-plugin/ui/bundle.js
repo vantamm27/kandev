@@ -18,7 +18,7 @@
     no_assignee: "nobody is assigned; use Assign to me in the task's top bar",
   };
 
-  var OUTCOMES = ["running", "launching", "review", "completed", "cancelled", "failed", "deleted", "launch_failed"];
+  var OUTCOMES = ["running", "launching", "released", "completed", "cancelled", "failed", "deleted", "launch_failed"];
 
   function pct(value) {
     return typeof value === "number" ? value.toFixed(0) + "%" : "-";

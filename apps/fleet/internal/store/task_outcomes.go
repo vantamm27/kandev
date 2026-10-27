@@ -13,14 +13,16 @@ type TaskOutcome struct {
 	OwnerUserID string
 }
 
-// Outcome classifies the task: launching, running, launch_failed, or the
-// finished Kandev state in lower case.
+// Outcome classifies the task: launching, running, launch_failed, released,
+// or the finished Kandev state in lower case.
 func (t TaskOutcome) Outcome() string {
 	switch {
 	case t.State == ClaimFailed:
 		return "launch_failed"
 	case t.State == ClaimLaunching:
 		return "launching"
+	case t.State == ClaimReleased:
+		return "released"
 	case t.FinishedAt == nil:
 		return "running"
 	default:
@@ -73,18 +75,19 @@ func (s *Store) ListTaskOutcomes(ctx context.Context) ([]TaskOutcome, error) {
 	return out, rows.Err()
 }
 
-// RecordTaskState stores the Kandev state of a launched, unfinished task and,
-// when finished, the time it was first seen finished. An unchanged state is
-// not rewritten. It leaves updated_at alone, which tracks launches against
-// heartbeats.
+// RecordTaskState stores the Kandev state of a launched, unfinished task, the
+// time that state was first seen and, when finished, the time it was first
+// seen finished. An unchanged state is not rewritten. It leaves updated_at
+// alone, which tracks launches against heartbeats.
 func (s *Store) RecordTaskState(ctx context.Context, taskID, taskState string, finished bool, now time.Time) error {
 	var finishedAt any
 	if finished {
 		finishedAt = now.UTC()
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET task_state = ?, finished_at = ?
+	_, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET task_state = ?, finished_at = ?,
+			task_state_at = CASE WHEN task_state = ? THEN task_state_at ELSE ? END
 		WHERE task_id = ? AND state = ? AND finished_at IS NULL AND (task_state != ? OR ?)`,
-		taskState, finishedAt, taskID, ClaimLaunched, taskState, finished)
+		taskState, finishedAt, taskState, now.UTC(), taskID, ClaimLaunched, taskState, finished)
 	if err != nil {
 		return fmt.Errorf("record task state: %w", err)
 	}

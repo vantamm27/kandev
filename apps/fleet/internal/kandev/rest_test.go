@@ -165,6 +165,21 @@ func TestGetWorkspaceReadsTheDefaultAgentProfile(t *testing.T) {
 	}
 }
 
+func TestGetWorkflowStepReadsOnEnterActions(t *testing.T) {
+	client, rec := restServer(t, http.StatusOK,
+		`{"step":{"id":"step-1","name":"Plan","events":{"on_enter":[{"type":"enable_plan_mode"},{"type":"auto_start_agent"}]}}}`)
+	step, err := client.GetWorkflowStep(context.Background(), "step-1")
+	if err != nil || step.ID != "step-1" || step.Name != "Plan" || !step.StartsAgentOnEnter() {
+		t.Fatalf("GetWorkflowStep = %+v, %v", step, err)
+	}
+	if rec.Method != http.MethodGet || rec.Path != "/api/v1/workflow/steps/step-1" {
+		t.Fatalf("request = %s %s", rec.Method, rec.Path)
+	}
+	if (WorkflowStep{}).StartsAgentOnEnter() {
+		t.Fatal("a step without actions does not start the agent")
+	}
+}
+
 func TestGetAgentProfileFindsItAcrossAgents(t *testing.T) {
 	body := `{"agents":[{"name":"codex-acp","profiles":[{"id":"p-codex","name":"Codex"}]},` +
 		`{"name":"claude-acp","profiles":[{"id":"p-1","name":"team","env_vars":[{"key":"ANTHROPIC_API_KEY","secret_id":"s"}],"provider_base_url":"https://gw"}]}]}`

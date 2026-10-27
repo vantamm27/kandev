@@ -113,3 +113,23 @@ func TestResolveAgentProfileRejectsAPIBilledProfiles(t *testing.T) {
 		t.Fatalf("subscription profile = %q, %v", got, err)
 	}
 }
+
+type fakeSteps map[string]kandev.WorkflowStep
+
+func (f fakeSteps) GetWorkflowStep(_ context.Context, id string) (kandev.WorkflowStep, error) {
+	s, ok := f[id]
+	if !ok {
+		return kandev.WorkflowStep{}, &kandev.APIError{Status: 404, Message: "Step not found"}
+	}
+	return s, nil
+}
+
+func TestIntakeStepWarnings(t *testing.T) {
+	auto := kandev.WorkflowStep{ID: "step-auto", Name: "In Progress",
+		Events: kandev.StepEvents{OnEnter: []kandev.StepAction{{Type: kandev.OnEnterAutoStartAgent}}}}
+	steps := fakeSteps{"step-ok": {ID: "step-ok", Name: "Backlog"}, "step-auto": auto}
+	got := intakeStepWarnings(context.Background(), steps, []string{"step-ok", "step-auto", "step-gone"})
+	if len(got) != 2 || !strings.Contains(got[0], "step-auto") || !strings.Contains(got[0], "auto_start_agent") || !strings.Contains(got[1], "step-gone") {
+		t.Fatalf("warnings = %q", got)
+	}
+}

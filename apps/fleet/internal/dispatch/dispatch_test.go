@@ -94,7 +94,7 @@ func newFixture(t *testing.T, seats ...store.Seat) (*store.Store, *fakeTasks, *f
 	}
 	tasks := &fakeTasks{}
 	launcher := &fakeLauncher{}
-	d := New(Config{WorkspaceID: "ws-1", IntakeStepID: "step-intake", AgentProfileID: "agent-prof", MaxAttempts: 2, RetryBackoff: time.Minute}, st, tasks, launcher,
+	d := New(Config{WorkspaceID: "ws-1", IntakeStepIDs: []string{"step-intake"}, AgentProfileID: "agent-prof", MaxAttempts: 2, RetryBackoff: time.Minute}, st, tasks, launcher,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	clock := t0.Add(time.Minute)
 	d.now = func() time.Time { return clock }

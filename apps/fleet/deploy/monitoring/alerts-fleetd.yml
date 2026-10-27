@@ -44,7 +44,7 @@ groups:
         annotations:
           summary: "{{ $value }} task launches failed in 15 minutes"
       - alert: FleetTaskRunningLong
-        expr: (fleet_task_duration_seconds and on(task) fleet_task_info{outcome="running"}) > 7200
+        expr: (fleet_task_duration_seconds and on(task) fleet_task_info{outcome="running", state!="REVIEW"}) > 7200
         labels: {severity: info}
         annotations:
           summary: "Task {{ $labels.task }} has run for {{ $value | humanizeDuration }} on {{ $labels.seat }}"

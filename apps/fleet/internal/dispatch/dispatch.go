@@ -1,5 +1,5 @@
 // Package dispatch starts queued Kandev tasks on their owners' seats. Each
-// round reads the intake step's tasks from Kandev, plans with the schedule
+// round reads the workspace's tasks from Kandev, plans with the schedule
 // package, claims each planned task in the store, and sends session.launch
 // on the seat's fixed executor profile.
 package dispatch
@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -34,8 +35,9 @@ type Launcher interface {
 // Config selects the tasks fleetd dispatches.
 type Config struct {
 	WorkspaceID string
-	// IntakeStepID is the workflow step where assigned tasks wait for a seat.
-	IntakeStepID string
+	// IntakeStepIDs are the workflow steps where assigned tasks wait for a
+	// seat, one per workflow.
+	IntakeStepIDs []string
 	// AgentProfileID is sent with every launch: a task created with
 	// start_agent=false has no agent profile of its own. A task created with
 	// this profile but not started also waits for a seat, in any step.
@@ -76,9 +78,11 @@ type LimitScanner interface {
 }
 
 // TaskTracker records the Kandev state of launched tasks from the round's
-// claims and the workspace tasks the round listed.
+// claims and the workspace tasks the round listed, and frees seats held by
+// tasks in review for owners whose queued tasks wait for a full seat.
 type TaskTracker interface {
 	Track(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error
+	Release(ctx context.Context, demand map[string]int, seatOwners map[string]string, now time.Time) error
 }
 
 // Dispatcher runs dispatch rounds.
@@ -182,6 +186,9 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := d.adoptKandevSessions(ctx, claims, listed, now); err != nil {
+		return err
+	}
 	candidates, exhausted := d.candidates(queued, claims, now)
 	plan := schedule.Schedule(candidates, seats, now, d.cfg.Policy)
 	stats := Stats{At: now, Queued: map[string]int{}, Waiting: map[string]map[string]int{}, Exhausted: exhausted}
@@ -214,7 +221,7 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 			stats.Failed++
 		}
 	}
-	d.postRound(ctx, claims, listed)
+	d.postRound(ctx, claims, listed, seatDemand(plan, listed), workingSeatOwners(seats))
 	d.mu.Lock()
 	d.last = stats
 	d.launched += int64(stats.Launched)
@@ -223,10 +230,14 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 	return nil
 }
 
-func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task) {
+func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task,
+	demand map[string]int, seatOwners map[string]string) {
 	if d.Tracker != nil {
 		if err := d.Tracker.Track(ctx, claims, listed, d.now()); err != nil {
 			d.log.Warn("task state tracking failed", "error", err)
+		}
+		if err := d.Tracker.Release(ctx, demand, seatOwners, d.now()); err != nil {
+			d.log.Warn("freeing seats held in review failed", "error", err)
 		}
 	}
 	for _, scan := range []struct {
@@ -243,9 +254,10 @@ func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Clai
 }
 
 // intakeTasks lists the tasks waiting for a seat that fleetd may launch. A
-// task waits when it is assigned and in the intake step, or when it was
-// created with the fleet agent profile and not started. It also returns every
-// workspace task it read.
+// task waits when it is assigned and in an intake step, when it was created
+// with the fleet agent profile and not started, or when fleetd released its
+// seat and its workflow went on. It also returns every workspace task it
+// read.
 func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, map[string]kandev.Task, error) {
 	var out []kandev.Task
 	listed := map[string]kandev.Task{}
@@ -256,7 +268,7 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 		}
 		for _, t := range res.Tasks {
 			listed[t.ID] = t
-			if d.waitsForSeat(t) && launchable(t, claims) {
+			if d.waitsForSeat(t, claims) && launchable(t, claims) {
 				out = append(out, t)
 			}
 		}
@@ -270,31 +282,87 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 
 // waitsForSeat reports whether a task is fleetd's to run, whatever its
 // session; launchable then decides whether its session allows a launch.
-func (d *Dispatcher) waitsForSeat(t kandev.Task) bool {
-	if t.WorkflowStepID == d.cfg.IntakeStepID && t.AssigneeUserID != "" {
+// A released task waits again only once its workflow goes on and it leaves
+// REVIEW.
+func (d *Dispatcher) waitsForSeat(t kandev.Task, claims map[string]store.Claim) bool {
+	if claims[t.ID].State == store.ClaimReleased {
+		return !kandev.TaskDone(t.State)
+	}
+	if slices.Contains(d.cfg.IntakeStepIDs, t.WorkflowStepID) && t.AssigneeUserID != "" {
 		return true
 	}
 	return t.PrimaryAgentProfileID == d.cfg.AgentProfileID && !kandev.TaskDone(t.State)
 }
 
 // launchable reports whether a task's session state lets fleetd launch it. A
-// failed session is retried only when fleetd's own launch created it. A
-// session that never sent a prompt is one Kandev prepared when someone opened
-// or created the task, unless fleetd's own launch is still in flight. Any
-// other session belongs to a person or to a running launch.
+// failed session is retried only when fleetd's own launch created it or
+// fleetd released the task. A session that never sent a prompt is one Kandev
+// prepared when someone opened or created the task, unless fleetd's own
+// launch is still in flight. A stopped session is relaunched only for a
+// released task, whose session fleetd stopped. Any other session belongs to a
+// person or to a running launch.
 func launchable(t kandev.Task, claims map[string]store.Claim) bool {
 	if t.PrimarySessionID == nil {
 		return true
 	}
 	c, ok := claims[t.ID]
+	retryable := ok && (c.State == store.ClaimFailed || c.State == store.ClaimReleased)
 	switch {
 	case t.PrimarySessionIs(kandev.SessionStateFailed):
-		return ok && c.State == store.ClaimFailed
+		return retryable
 	case t.PrimarySessionIs(kandev.SessionStateCreated):
-		return !ok || c.State == store.ClaimFailed
+		return !ok || retryable
+	case t.PrimarySessionIs(kandev.SessionStateCancelled):
+		return ok && c.State == store.ClaimReleased
 	default:
 		return false
 	}
+}
+
+// adoptKandevSessions tracks the live sessions Kandev started on its own for
+// released tasks that went on (a person replied, or a workflow step started
+// the agent), so fleetd does not launch them again and can free their seats
+// later. Tracking starts with the next round's claims.
+func (d *Dispatcher) adoptKandevSessions(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error {
+	for id, c := range claims {
+		t, ok := listed[id]
+		if c.State != store.ClaimReleased || !ok || kandev.TaskDone(t.State) || !t.PrimarySessionLive() {
+			continue
+		}
+		if err := d.store.AdoptSession(ctx, id, *t.PrimarySessionID, now); err != nil {
+			return err
+		}
+		d.log.Info("tracking a session Kandev started for a released task", "task_id", id, "seat_id", c.SeatID,
+			"session_id", *t.PrimarySessionID)
+	}
+	return nil
+}
+
+// seatDemand counts, per owner, the queued tasks waiting because the owner's
+// seats are full.
+func seatDemand(plan schedule.Plan, listed map[string]kandev.Task) map[string]int {
+	demand := map[string]int{}
+	for _, w := range plan.Waiting {
+		if w.Reason != schedule.ReasonFull {
+			continue
+		}
+		if owner := listed[w.TaskID].AssigneeUserID; owner != "" {
+			demand[owner]++
+		}
+	}
+	return demand
+}
+
+// workingSeatOwners maps the seats that take work when a slot frees (not
+// cooling down, draining, or offline) to their owners.
+func workingSeatOwners(seats []schedule.Seat) map[string]string {
+	out := make(map[string]string, len(seats))
+	for _, s := range seats {
+		if s.State == store.SeatOnline || s.State == store.SeatBusy {
+			out[s.ID] = s.OwnerUserID
+		}
+	}
+	return out
 }
 
 // seats returns schedulable seats, with free slots reduced by launches their
@@ -328,12 +396,16 @@ func (d *Dispatcher) seats(ctx context.Context) ([]schedule.Seat, map[string]str
 }
 
 // candidates drops tasks fleetd already launched, tasks still backing off,
-// and tasks out of attempts.
+// and tasks out of attempts. A released task is pinned to the seat that
+// holds its environment.
 func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Claim, now time.Time) ([]schedule.Task, int) {
 	out := make([]schedule.Task, 0, len(tasks))
 	exhausted := 0
 	for _, t := range tasks {
-		if c, ok := claims[t.ID]; ok {
+		pin := ""
+		if c, ok := claims[t.ID]; ok && c.State == store.ClaimReleased {
+			pin = c.SeatID
+		} else if ok {
 			if c.State != store.ClaimFailed {
 				continue
 			}
@@ -349,7 +421,7 @@ func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Cla
 		if priority == "" {
 			priority = schedule.PriorityMedium
 		}
-		out = append(out, schedule.Task{ID: t.ID, OwnerUserID: t.AssigneeUserID, Priority: priority, QueuedAt: t.CreatedAt})
+		out = append(out, schedule.Task{ID: t.ID, OwnerUserID: t.AssigneeUserID, Priority: priority, QueuedAt: t.CreatedAt, SeatID: pin})
 	}
 	return out, exhausted
 }

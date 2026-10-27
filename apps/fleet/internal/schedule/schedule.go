@@ -37,6 +37,9 @@ type Task struct {
 	QueuedAt    time.Time
 	// Labels the seat must carry, for example "xcode".
 	RequiredLabels []string
+	// SeatID, when set, is the only seat the task may run on: the one that
+	// holds its environment.
+	SeatID string
 }
 
 // Seat is a seat's scheduling-relevant state.
@@ -187,7 +190,7 @@ func pickSeat(t Task, seats []Seat, free map[string]int, now time.Time, p Policy
 	var best *Seat
 	for i := range seats {
 		s := &seats[i]
-		if s.OwnerUserID != t.OwnerUserID {
+		if s.OwnerUserID != t.OwnerUserID || (t.SeatID != "" && s.ID != t.SeatID) {
 			continue
 		}
 		r := seatReason(t, *s, free[s.ID], class, now, p)
