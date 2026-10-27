@@ -82,8 +82,10 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 ## Dispatching
 
 Each round fleetd lists the workspace's tasks and picks those that are in the
-intake step, have a human assignee, and have no session yet, or only the
-`CREATED` session the web UI prepares when someone opens the task. Create them with
+intake step, have a human assignee, and have no session yet. Do not open them
+in the web UI before they start: the UI prepares a session whose workspace
+lives on Kandev's default executor, and Kandev then refuses to start the task
+on a seat. Create them with
 `start_agent=false` (for example `create_task_kandev` with
 `assignee_user_id: "me"`), otherwise Kandev starts them on its default
 executor. The schedule package orders them (priority plus capped aging) and

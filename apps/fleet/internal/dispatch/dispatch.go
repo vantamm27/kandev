@@ -249,19 +249,14 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 	return out, listed, nil
 }
 
-// Kandev session states the intake filter reads.
-const (
-	sessionFailed  = "FAILED"  // ended in an error
-	sessionCreated = "CREATED" // prepared, never started
-)
+// sessionFailed is Kandev's state for a session that ended in an error.
+const sessionFailed = "FAILED"
 
 // launchable reports whether a task's session state lets fleetd launch it. A
 // failed session is retried only when fleetd's own launch created it; any
 // other session belongs to a person or to a launch that is still running.
 func launchable(t kandev.Task, claims map[string]store.Claim) bool {
-	// A CREATED session was only prepared (opening the task in the web UI
-	// does that) and never ran an agent, so a launch can replace it.
-	if t.PrimarySessionID == nil || (t.PrimarySessionState != nil && *t.PrimarySessionState == sessionCreated) {
+	if t.PrimarySessionID == nil {
 		return true
 	}
 	c, ok := claims[t.ID]

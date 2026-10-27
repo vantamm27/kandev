@@ -63,18 +63,16 @@ func TestLeavesSessionsFleetdDidNotStart(t *testing.T) {
 	}
 }
 
-// Opening an intake task in the web UI prepares a CREATED session that never
-// runs. fleetd launches over it and makes its own session primary.
-func TestLaunchesOverASessionTheUIOnlyPrepared(t *testing.T) {
+// Opening an intake task in the web UI prepares a session whose workspace
+// lives on Kandev's default executor; Kandev refuses to start another session
+// of that task on a seat, so fleetd leaves the task alone.
+func TestLeavesTasksTheUIPrepared(t *testing.T) {
 	_, tasks, launcher, d, _ := newFixture(t, seatFor("a1", "user-a", 1))
 	tasks.tasks = []kandev.Task{withSession(intake("t-opened", "user-a", "high"), "s-prepared", "CREATED")}
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.calls) != 1 || launcher.calls[0].TaskID != "t-opened" {
-		t.Fatalf("launches = %+v; a prepared session must not block dispatch", launcher.calls)
-	}
-	if len(launcher.primary) != 1 || launcher.primary[0] != "sess-t-opened" {
-		t.Fatalf("primary = %v; fleetd's session must replace the prepared one", launcher.primary)
+	if len(launcher.calls) != 0 {
+		t.Fatalf("launches = %+v; a UI-prepared task cannot run on a seat", launcher.calls)
 	}
 }
