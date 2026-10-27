@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+	"time"
 )
 
 func TestFreeSlots(t *testing.T) {
@@ -34,16 +35,46 @@ func TestDefaultAgentctlPatternMatchesOnlyTheSSHExecutorBinary(t *testing.T) {
 	}
 }
 
-func TestProcessSlotCounterCountsMatchingCommandLines(t *testing.T) {
+func TestCountBusyAgentctlIgnoresIdleWorkspaceAgentctl(t *testing.T) {
+	re := regexp.MustCompile(DefaultAgentctlPattern)
+	out := []byte(`
+  100     1  1-02:03:04 /home/seat/.kandev/bin/agentctl --workdir /a
+  101   100       10:00 npm exec @agentclientprotocol/claude-agent-acp@0.81.2
+  200     1       30:00 /home/seat/.kandev/bin/agentctl --workdir /b
+  201   200       29:00 /bin/bash
+  202   200       28:00 -zsh
+  300     1       00:45 /home/seat/.kandev/bin/agentctl --workdir /c
+  400     1    02:00:00 /opt/homebrew/bin/agentctl -port=1
+  401   400    02:00:00 node server.js
+`)
+	// 100 runs an agent; 200 only serves terminals; 300 is still starting.
+	if got := countBusyAgentctl(parseProcesses(out), re); got != 2 {
+		t.Fatalf("busy agentctl = %d, want 2", got)
+	}
+}
+
+func TestParseElapsed(t *testing.T) {
+	for raw, want := range map[string]time.Duration{
+		"00:45": 45 * time.Second, "10:00": 10 * time.Minute, "02:00:00": 2 * time.Hour,
+		"1-02:03:04": 26*time.Hour + 3*time.Minute + 4*time.Second,
+	} {
+		if got, err := parseElapsed(raw); err != nil || got != want {
+			t.Errorf("parseElapsed(%q) = %v, %v; want %v", raw, got, err, want)
+		}
+	}
+	if _, err := parseElapsed("x:1"); err == nil {
+		t.Error("garbage must be an error")
+	}
+}
+
+func TestProcessSlotCounterCountsYoungAgentctlProcesses(t *testing.T) {
 	sleepPath, err := exec.LookPath("sleep")
 	if err != nil {
 		t.Skip("sleep not installed")
 	}
-	if _, err := exec.LookPath("pgrep"); err != nil {
-		t.Skip("pgrep not installed")
-	}
-	// argv[0] is what pgrep -f sees, so a renamed argv[0] stands in for an
-	// agentctl binary without copying one.
+	// argv[0] is what ps shows, so a renamed argv[0] stands in for an
+	// agentctl binary without copying one. A new process counts during
+	// StartupGrace even before it has an agent child.
 	dir := t.TempDir()
 	start := func(argv0 string) {
 		t.Helper()

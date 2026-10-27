@@ -169,7 +169,9 @@ works while the seat is at its usage limit. Pass `--no-ci-skip` for a remote
 that does not accept push options.
 
 Free slots are capacity minus this user's `agentctl` processes (one per Kandev
-session).
+session) that run an agent, that is a child other than a shell, or that started
+less than 2 minutes ago. Kandev also restarts a finished task's `agentctl` when
+someone views its files or terminal; with only shells under it, it holds no slot.
 
 ### Quota
 
