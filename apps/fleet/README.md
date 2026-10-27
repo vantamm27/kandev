@@ -112,7 +112,9 @@ After each dispatch round fleetd reads the Kandev state of every launched task
 it has not yet seen finish (`REVIEW`, `COMPLETED`, `CANCELLED`, `FAILED`, or
 deleted) and records it with the time it finished. When a task finishes it
 sends `session.stop` for fleetd's session once: a session waiting for input
-keeps agentctl running and the seat full. The conversation stays resumable.
+keeps agentctl running and the seat full. The stopped session is `CANCELLED`
+and Kandev does not resume it; its transcript and the task directory on the
+seat stay, and a person continues the task with a new session.
 `/metrics` reports:
 
 | Metric | Labels | Meaning |

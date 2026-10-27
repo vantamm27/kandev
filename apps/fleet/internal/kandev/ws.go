@@ -176,7 +176,7 @@ func (c *Conn) SetPrimarySession(ctx context.Context, sessionID string) error {
 }
 
 // StopSession sends session.stop, which ends the session's agent and frees
-// its executor. The conversation stays resumable.
+// its executor. The session becomes CANCELLED and is not resumed.
 func (c *Conn) StopSession(ctx context.Context, sessionID, reason string) error {
 	return c.Request(ctx, "session.stop", map[string]string{"session_id": sessionID, "reason": reason}, nil)
 }
