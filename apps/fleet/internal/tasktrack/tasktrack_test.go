@@ -6,6 +6,8 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +28,13 @@ func (f fakeTasks) GetTask(_ context.Context, id string) (kandev.Task, error) {
 		return kandev.Task{}, &kandev.APIError{Status: 404, Message: "task not found"}
 	}
 	return t, nil
+}
+
+type fakeSessions struct{ stopped []string }
+
+func (f *fakeSessions) StopSession(_ context.Context, sessionID, _ string) error {
+	f.stopped = append(f.stopped, sessionID)
+	return nil
 }
 
 func launchedStore(t *testing.T, taskIDs ...string) *store.Store {
@@ -56,7 +65,8 @@ func launchedStore(t *testing.T, taskIDs ...string) *store.Store {
 
 func TestTrackRecordsStatesAndFinishes(t *testing.T) {
 	st := launchedStore(t, "task-run", "task-review", "task-gone", "task-down", "task-failed")
-	tr := New(st, fakeTasks{"task-failed": {ID: "task-failed", State: "FAILED"}},
+	sessions := &fakeSessions{}
+	tr := New(st, fakeTasks{"task-failed": {ID: "task-failed", State: "FAILED"}}, sessions,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	listed := map[string]kandev.Task{
 		"task-run":    {ID: "task-run", State: "IN_PROGRESS"},
@@ -83,5 +93,17 @@ func TestTrackRecordsStatesAndFinishes(t *testing.T) {
 	}
 	if o := got["task-down"]; o.TaskState != "" || o.FinishedAt != nil {
 		t.Errorf("unreadable task must be left for the next round: %+v", o)
+	}
+	sort.Strings(sessions.stopped)
+	if strings.Join(sessions.stopped, ",") != "session-task-failed,session-task-review" {
+		t.Errorf("stopped sessions = %v; want the finished tasks' sessions, not the deleted or running ones", sessions.stopped)
+	}
+	sessions.stopped = nil
+	claims, _ = st.ListClaims(context.Background())
+	if err := tr.Track(context.Background(), claims, listed, now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions.stopped) != 0 {
+		t.Errorf("a finished task's session must be stopped once, got %v", sessions.stopped)
 	}
 }

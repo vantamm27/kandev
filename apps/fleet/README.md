@@ -82,7 +82,8 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 ## Dispatching
 
 Each round fleetd lists the workspace's tasks and picks those that are in the
-intake step, have a human assignee, and have no session yet. Create them with
+intake step, have a human assignee, and have no session yet, or only the
+`CREATED` session the web UI prepares when someone opens the task. Create them with
 `start_agent=false` (for example `create_task_kandev` with
 `assignee_user_id: "me"`), otherwise Kandev starts them on its default
 executor. The schedule package orders them (priority plus capped aging) and
@@ -107,7 +108,10 @@ After each round fleetd also:
 
 After each dispatch round fleetd reads the Kandev state of every launched task
 it has not yet seen finish (`REVIEW`, `COMPLETED`, `CANCELLED`, `FAILED`, or
-deleted) and records it with the time it finished. `/metrics` reports:
+deleted) and records it with the time it finished. When a task finishes it
+sends `session.stop` for fleetd's session once: a session waiting for input
+keeps agentctl running and the seat full. The conversation stays resumable.
+`/metrics` reports:
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |

@@ -175,6 +175,12 @@ func (c *Conn) SetPrimarySession(ctx context.Context, sessionID string) error {
 	return c.Request(ctx, "session.set_primary", map[string]string{"session_id": sessionID}, nil)
 }
 
+// StopSession sends session.stop, which ends the session's agent and frees
+// its executor. The conversation stays resumable.
+func (c *Conn) StopSession(ctx context.Context, sessionID, reason string) error {
+	return c.Request(ctx, "session.stop", map[string]string{"session_id": sessionID, "reason": reason}, nil)
+}
+
 // AddMessage sends message.add: a user message to a task session. Kandev
 // queues it when the agent is mid-turn.
 func (c *Conn) AddMessage(ctx context.Context, taskID, sessionID, content string) error {

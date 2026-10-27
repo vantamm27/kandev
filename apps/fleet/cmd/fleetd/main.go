@@ -184,7 +184,7 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	}, db, client, launcher, log)
 	d.Limits = limits.New(db, client, log)
 	d.Nudges = nudge.New(db, client, launcher, log)
-	d.Tracker = tasktrack.New(db, client, log)
+	d.Tracker = tasktrack.New(db, client, launcher, log)
 	deps.Dispatch = d
 	deps.Handoffs = handoff.New(db, client, launcher, log)
 	deps.HandoffCounts = db

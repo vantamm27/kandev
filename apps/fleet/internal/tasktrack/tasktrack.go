@@ -19,16 +19,27 @@ type Tasks interface {
 // StateDeleted is recorded for a launched task Kandev no longer returns.
 const StateDeleted = "DELETED"
 
-// Tracker records the Kandev state of unfinished launched tasks.
+// Sessions stops Kandev sessions.
+type Sessions interface {
+	StopSession(ctx context.Context, sessionID, reason string) error
+}
+
+// stopReason is recorded on sessions fleetd stops.
+const stopReason = "fleetd: task finished, freeing the seat"
+
+// Tracker records the Kandev state of unfinished launched tasks and stops
+// the session of a finished one, because a session waiting for input keeps
+// its agentctl running and its seat busy.
 type Tracker struct {
-	store *store.Store
-	tasks Tasks
-	log   *slog.Logger
+	store    *store.Store
+	tasks    Tasks
+	sessions Sessions
+	log      *slog.Logger
 }
 
 // New returns a tracker.
-func New(st *store.Store, tasks Tasks, log *slog.Logger) *Tracker {
-	return &Tracker{store: st, tasks: tasks, log: log}
+func New(st *store.Store, tasks Tasks, sessions Sessions, log *slog.Logger) *Tracker {
+	return &Tracker{store: st, tasks: tasks, sessions: sessions, log: log}
 }
 
 // Track records the state of every launched claim not yet seen finished.
@@ -56,9 +67,21 @@ func (t *Tracker) Track(ctx context.Context, claims map[string]store.Claim, list
 		}
 		if finished {
 			t.log.Info("task finished", "task_id", id, "state", state)
+			t.stopSession(ctx, c, state)
 		}
 	}
 	return nil
+}
+
+// stopSession ends the finished task's session. A failed stop is logged; the
+// seat stays busy until someone stops the session.
+func (t *Tracker) stopSession(ctx context.Context, c store.Claim, state string) {
+	if c.SessionID == "" || state == StateDeleted {
+		return
+	}
+	if err := t.sessions.StopSession(ctx, c.SessionID, stopReason); err != nil {
+		t.log.Warn("could not stop a finished task's session", "task_id", c.TaskID, "session_id", c.SessionID, "error", err)
+	}
 }
 
 func (t *Tracker) state(ctx context.Context, id string, listed map[string]kandev.Task) (string, error) {

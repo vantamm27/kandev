@@ -41,6 +41,11 @@ func (l *Launcher) SetPrimarySession(ctx context.Context, sessionID string) erro
 	return l.with(ctx, func(conn *Conn) error { return conn.SetPrimarySession(ctx, sessionID) })
 }
 
+// StopSession sends session.stop on the shared connection.
+func (l *Launcher) StopSession(ctx context.Context, sessionID, reason string) error {
+	return l.with(ctx, func(conn *Conn) error { return conn.StopSession(ctx, sessionID, reason) })
+}
+
 func (l *Launcher) with(ctx context.Context, call func(*Conn) error) error {
 	conn, err := l.connection(ctx)
 	if err != nil {

@@ -218,3 +218,22 @@ func TestSetPrimarySessionPayload(t *testing.T) {
 		t.Fatalf("sent %s %+v", got.Action, payload)
 	}
 }
+
+func TestStopSessionPayload(t *testing.T) {
+	var got Message
+	_, url := newFakeKandevWS(t, func(msg Message) *Message {
+		got = msg
+		return &Message{ID: msg.ID, Type: "response", Action: msg.Action, Payload: json.RawMessage(`{"success":true}`)}
+	})
+	conn := dialTest(t, url)
+	if err := conn.StopSession(testCtx(t), "sess-3", "done"); err != nil {
+		t.Fatalf("StopSession: %v", err)
+	}
+	var payload map[string]string
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got.Action != "session.stop" || payload["session_id"] != "sess-3" || payload["reason"] != "done" {
+		t.Fatalf("sent %s %+v", got.Action, payload)
+	}
+}
