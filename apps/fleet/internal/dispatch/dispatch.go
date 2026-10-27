@@ -474,7 +474,7 @@ func (d *Dispatcher) start(ctx context.Context, t kandev.Task, profileID, priori
 	}
 	res, err := d.launcher.LaunchSession(ctx, kandev.LaunchSessionInput{
 		TaskID: t.ID, Intent: kandev.IntentStart, AgentProfileID: d.cfg.AgentProfileID,
-		ExecutorProfileID: profileID, Priority: priority,
+		ExecutorProfileID: profileID, WorkflowStepID: t.WorkflowStepID, Priority: priority,
 	})
 	if err == nil && !res.Success {
 		err = errors.New("session.launch returned success=false")

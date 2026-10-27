@@ -83,7 +83,7 @@ func TestLaunchSessionRoundTrip(t *testing.T) {
 	}
 
 	result, err := conn.LaunchSession(testCtx(t), LaunchSessionInput{
-		TaskID: "task-1", Intent: IntentStart, ExecutorProfileID: "prof-1", Priority: "high",
+		TaskID: "task-1", Intent: IntentStart, ExecutorProfileID: "prof-1", WorkflowStepID: "step-1", Priority: "high",
 	})
 	if err != nil {
 		t.Fatalf("LaunchSession: %v", err)
@@ -96,7 +96,8 @@ func TestLaunchSessionRoundTrip(t *testing.T) {
 		t.Fatalf("payload: %v", err)
 	}
 	if got.Type != "request" || got.Action != "session.launch" || got.ID == "" ||
-		payload["task_id"] != "task-1" || payload["intent"] != "start" || payload["executor_profile_id"] != "prof-1" {
+		payload["task_id"] != "task-1" || payload["intent"] != "start" || payload["executor_profile_id"] != "prof-1" ||
+		payload["workflow_step_id"] != "step-1" {
 		t.Fatalf("sent %+v payload %+v", got, payload)
 	}
 	if _, present := payload["session_id"]; present {

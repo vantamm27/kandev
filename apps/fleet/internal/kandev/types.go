@@ -180,7 +180,9 @@ type LaunchSessionInput struct {
 	ExecutorID        string `json:"executor_id,omitempty"`
 	ExecutorProfileID string `json:"executor_profile_id,omitempty"`
 	Prompt            string `json:"prompt,omitempty"`
-	Priority          string `json:"priority,omitempty"`
+	// WorkflowStepID makes Kandev apply the step's prompt to the first turn.
+	WorkflowStepID string `json:"workflow_step_id,omitempty"`
+	Priority       string `json:"priority,omitempty"`
 }
 
 // LaunchSessionResult is the session.launch response payload.

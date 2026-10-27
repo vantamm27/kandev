@@ -158,8 +158,8 @@ func TestReleasedTaskMovedToAnAgentStepRunsAgain(t *testing.T) {
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" {
-		t.Fatalf("calls = %+v; want a relaunch on seat a1", launcher.calls)
+	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" || launcher.calls[0].WorkflowStepID != "step-implement" {
+		t.Fatalf("calls = %+v; want a relaunch on seat a1 with the step's prompt", launcher.calls)
 	}
 }
 
