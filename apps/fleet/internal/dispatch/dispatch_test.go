@@ -80,6 +80,8 @@ type fakeLauncher struct {
 	primary []string
 	stopped []string
 	sent    []string
+	// failIntent makes launches with this intent fail.
+	failIntent string
 }
 
 func (f *fakeLauncher) AddMessage(_ context.Context, taskID, sessionID, _ string) error {
@@ -110,7 +112,14 @@ func (f *fakeLauncher) LaunchSession(_ context.Context, in kandev.LaunchSessionI
 	if f.err != nil {
 		return kandev.LaunchSessionResult{}, f.err
 	}
-	return kandev.LaunchSessionResult{Success: true, TaskID: in.TaskID, SessionID: "sess-" + in.TaskID, State: "STARTING"}, nil
+	if f.failIntent != "" && in.Intent == f.failIntent {
+		return kandev.LaunchSessionResult{}, errors.New("kandev: session.launch: session has ended")
+	}
+	sessionID := in.SessionID
+	if sessionID == "" {
+		sessionID = "sess-" + in.TaskID
+	}
+	return kandev.LaunchSessionResult{Success: true, TaskID: in.TaskID, SessionID: sessionID, State: "STARTING"}, nil
 }
 
 func newFixture(t *testing.T, seats ...store.Seat) (*store.Store, *fakeTasks, *fakeLauncher, *Dispatcher, *time.Time) {

@@ -170,6 +170,10 @@ const (
 	IntentStart   = "start"
 	IntentResume  = "resume"
 	IntentPrepare = "prepare"
+	// IntentWorkflowStep starts an existing session (resuming it when it
+	// stopped) and prompts it with the workflow step's prompt, in the same
+	// conversation.
+	IntentWorkflowStep = "workflow_step"
 )
 
 // LaunchSessionInput is the session.launch WS payload.

@@ -173,6 +173,25 @@ seat, so Resume continues the same conversation there; a message to the
 stopped session is refused until then. They run even when the seat is busy or
 at its usage limit, since Kandev does not ask fleetd. fleetd adopts the
 revived session and can free the seat again later. A new session from the
+task's **+** tab uses the executor chosen in its dialog, not the seat. Otherwise fleetd continues the task in its stopped seat session, once the
+seat has a free slot: it stops live sessions Kandev started for the task on
+another executor and sends `session.launch` with intent `workflow_step` for
+the seat session and the task's current step. Kandev resumes that session on
+the seat and sends the step's prompt in the same conversation, so the agent
+keeps its context across steps. For a move into an `auto_start_agent` step,
+Kandev first tries the agent on its own host, which fails with
+"Authentication required"; that failed session stays listed in the task. If
+the seat session cannot continue, fleetd resets the task environment and
+launches a new session on the seat with the step's prompt, which starts a
+fresh conversation; agents should still commit or push their work at the end
+of each step.
+
+**Resume.** The stopped session shows Kandev's **Resume** and **Start fresh
+session** buttons. Both start the same session on the executor it ran on, the
+seat, so Resume continues the same conversation there; a message to the
+stopped session is refused until then. They run even when the seat is busy or
+at its usage limit, since Kandev does not ask fleetd. fleetd adopts the
+revived session and can free the seat again later. A new session from the
 task's **+** tab uses the executor chosen in its dialog, not the seat. Otherwise fleetd launches a new session on the
 seat the task was released from, with the step's prompt. For a move into an
 `auto_start_agent` step, Kandev first starts the agent on its own host, which

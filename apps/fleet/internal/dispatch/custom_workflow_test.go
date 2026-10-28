@@ -111,14 +111,15 @@ func TestReleasedTaskContinuesOnItsSeat(t *testing.T) {
 	implement := withSession(inState(intake("t-plan", "user-a", "high"), "IN_PROGRESS"), "sess-plan", "CANCELLED")
 	implement.WorkflowStepID = "step-implement"
 	tasks.tasks = []kandev.Task{implement}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {{ID: "sess-plan", State: "CANCELLED", ExecutorID: "exec-a1"}}}
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.calls) != 1 || launcher.calls[0].TaskID != "t-plan" || launcher.calls[0].ExecutorProfileID != "prof-a1" {
-		t.Fatalf("calls = %+v; want a relaunch on seat a1, not the emptier a2", launcher.calls)
+	if len(launcher.calls) != 1 || launcher.calls[0].Intent != kandev.IntentWorkflowStep || launcher.calls[0].SessionID != "sess-plan" {
+		t.Fatalf("calls = %+v; want its seat session continued", launcher.calls)
 	}
-	if len(launcher.primary) != 1 || launcher.primary[0] != "sess-t-plan" {
-		t.Fatalf("primary = %v; the new session must replace the stopped one", launcher.primary)
+	if len(launcher.primary) != 0 {
+		t.Fatalf("primary = %v; the continued session is already primary", launcher.primary)
 	}
 	if len(tasks.resets) != 0 {
 		t.Fatalf("resets = %v; the environment on the seat must be kept", tasks.resets)
@@ -155,11 +156,12 @@ func TestReleasedTaskMovedToAnAgentStepRunsAgain(t *testing.T) {
 	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
 	moved.WorkflowStepID = "step-implement"
 	tasks.tasks = []kandev.Task{moved}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {{ID: "sess-plan", State: "CANCELLED", ExecutorID: "exec-a1"}}}
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" || launcher.calls[0].WorkflowStepID != "step-implement" {
-		t.Fatalf("calls = %+v; want a relaunch on seat a1 with the step's prompt", launcher.calls)
+	if len(launcher.calls) != 1 || launcher.calls[0].Intent != kandev.IntentWorkflowStep || launcher.calls[0].WorkflowStepID != "step-implement" {
+		t.Fatalf("calls = %+v; want its seat session continued with the step's prompt", launcher.calls)
 	}
 }
 
@@ -203,11 +205,43 @@ func TestSeveralIntakeSteps(t *testing.T) {
 }
 
 // Kandev's own start of a released task (on its host, which has no
-// subscription login) leaves a session there that built the task environment
-// on that host. fleetd stops it and resets the environment, or the seat launch
-// fails with "workspace reuse is unsafe".
-func TestRelaunchClearsASessionKandevStartedElsewhere(t *testing.T) {
+// subscription login) leaves a live session there. fleetd stops it and
+// continues the task in its stopped seat session, in the same conversation,
+// keeping the task environment.
+func TestReleasedTaskContinuesItsSeatSession(t *testing.T) {
 	_, tasks, launcher, d, _ := releasedFixture(t)
+	tasks.steps = map[string]bool{"step-implement": true}
+	// Kandev made its failed host session primary.
+	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-host", "WAITING_FOR_INPUT")
+	moved.WorkflowStepID = "step-implement"
+	tasks.tasks = []kandev.Task{moved}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {
+		{ID: "sess-plan", State: "CANCELLED", ExecutorID: "exec-a1"},
+		{ID: "sess-host", State: "WAITING_FOR_INPUT"},
+	}}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(launcher.stopped, ",") != "sess-host" || len(tasks.resets) != 0 {
+		t.Fatalf("stopped = %v, resets = %v; want the host session stopped and the environment kept", launcher.stopped, tasks.resets)
+	}
+	if len(launcher.calls) != 1 {
+		t.Fatalf("calls = %+v", launcher.calls)
+	}
+	c := launcher.calls[0]
+	if c.Intent != kandev.IntentWorkflowStep || c.SessionID != "sess-plan" || c.WorkflowStepID != "step-implement" || c.ExecutorProfileID != "" {
+		t.Fatalf("launch = %+v; want the seat session started for the step", c)
+	}
+	if strings.Join(launcher.primary, ",") != "sess-plan" {
+		t.Fatalf("primary = %v; the seat session must be primary again", launcher.primary)
+	}
+}
+
+// When Kandev cannot continue the stopped seat session, fleetd falls back to a
+// new session on the seat, clearing the host session's environment first.
+func TestReleasedTaskStartsANewSessionWhenItsSessionCannotContinue(t *testing.T) {
+	_, tasks, launcher, d, _ := releasedFixture(t)
+	launcher.failIntent = kandev.IntentWorkflowStep
 	tasks.steps = map[string]bool{"step-implement": true}
 	moved := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "CANCELLED")
 	moved.WorkflowStepID = "step-implement"
@@ -219,11 +253,11 @@ func TestRelaunchClearsASessionKandevStartedElsewhere(t *testing.T) {
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(launcher.stopped, ",") != "sess-host" || strings.Join(tasks.resets, ",") != "t-plan" {
-		t.Fatalf("stopped = %v, resets = %v; want the host session stopped and the environment reset", launcher.stopped, tasks.resets)
+	if len(launcher.calls) != 2 || launcher.calls[1].Intent != kandev.IntentStart || launcher.calls[1].ExecutorProfileID != "prof-a1" {
+		t.Fatalf("calls = %+v; want a new session on seat a1 after the failed continue", launcher.calls)
 	}
-	if len(launcher.calls) != 1 || launcher.calls[0].ExecutorProfileID != "prof-a1" {
-		t.Fatalf("calls = %+v", launcher.calls)
+	if strings.Join(tasks.resets, ",") != "t-plan" {
+		t.Fatalf("resets = %v; the host-built environment must be reset before a new session", tasks.resets)
 	}
 }
 

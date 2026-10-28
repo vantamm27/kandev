@@ -247,7 +247,7 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 		}
 	}
 	for _, a := range plan.Assignments {
-		if d.launch(ctx, a, profiles[a.SeatID], priorities[a.TaskID], listed[a.TaskID]) {
+		if d.launch(ctx, a, profiles[a.SeatID], priorities[a.TaskID], listed[a.TaskID], claims[a.TaskID]) {
 			stats.Launched++
 		} else {
 			stats.Failed++
@@ -310,7 +310,7 @@ func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Cl
 		}
 		for _, t := range res.Tasks {
 			listed[t.ID] = t
-			if d.waitsForSeat(ctx, t, claims, agentSteps) && launchable(t, claims) {
+			if d.waitsForSeat(ctx, t, claims, agentSteps) && d.launchable(ctx, t, claims) {
 				out = append(out, t)
 			}
 		}
@@ -343,17 +343,28 @@ func (d *Dispatcher) waitsForSeat(ctx context.Context, t kandev.Task, claims map
 }
 
 // launchable reports whether a task's session state lets fleetd launch it. A
+// released task's live primary session off the seat does not stop it. A
 // failed session is retried only when fleetd's own launch created it or
 // fleetd released the task. A session that never sent a prompt is one Kandev
 // prepared when someone opened or created the task, unless fleetd's own
 // launch is still in flight. A stopped session is relaunched only when fleetd
 // stopped it (a released task) or its relaunch failed. Any other session
 // belongs to a person or to a running launch.
-func launchable(t kandev.Task, claims map[string]store.Claim) bool {
+func (d *Dispatcher) launchable(ctx context.Context, t kandev.Task, claims map[string]store.Claim) bool {
 	if t.PrimarySessionID == nil {
 		return true
 	}
 	c, ok := claims[t.ID]
+	if ok && c.State == store.ClaimReleased && t.PrimarySessionLive() {
+		// Kandev's own start of a released task can leave its failed host
+		// session primary and live; only a live session on the seat is the
+		// task's (and adopted).
+		onSeat, err := d.primaryOnSeat(ctx, t, c.SeatID)
+		if err != nil {
+			d.log.Warn("cannot tell where a released task's live session runs", "task_id", t.ID, "error", err)
+		}
+		return err == nil && !onSeat
+	}
 	retryable := ok && (c.State == store.ClaimFailed || c.State == store.ClaimReleased)
 	switch {
 	case t.PrimarySessionIs(kandev.SessionStateFailed):
@@ -531,16 +542,30 @@ func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Cla
 	return out, exhausted
 }
 
-// start sends session.launch for a task, after taking over a session Kandev
-// prepared on its own host, or clearing sessions Kandev started away from
-// the seat of a stopped or failed one.
-func (d *Dispatcher) start(ctx context.Context, t kandev.Task, profileID, priority string) (kandev.LaunchSessionResult, error) {
-	var err error
+// start runs a task on a seat. A released task continues its stopped seat
+// session in the same conversation; otherwise, or when that fails, start
+// sends session.launch for a new session, after taking over a session Kandev
+// prepared on its own host, or clearing sessions Kandev started away from the
+// seat of a stopped or failed one. prior is the task's claim before this
+// launch.
+func (d *Dispatcher) start(ctx context.Context, t kandev.Task, seatID, profileID, priority string, prior store.Claim) (kandev.LaunchSessionResult, error) {
+	seat, err := d.store.GetSeat(ctx, seatID)
+	if err != nil {
+		return kandev.LaunchSessionResult{}, err
+	}
+	if prior.State == store.ClaimReleased && prior.SessionID != "" && t.WorkflowStepID != "" {
+		res, err := d.continueSession(ctx, t, prior.SessionID, seat.KandevExecutorID, priority)
+		if err == nil {
+			return res, nil
+		}
+		d.log.Warn("could not continue the released session; starting a new one", "task_id", t.ID,
+			"session_id", prior.SessionID, "error", err)
+	}
 	switch {
 	case t.PrimarySessionIs(kandev.SessionStateCreated):
 		err = d.takeOver(ctx, t.ID, *t.PrimarySessionID)
 	case t.PrimarySessionIs(kandev.SessionStateCancelled) || t.PrimarySessionIs(kandev.SessionStateFailed):
-		err = d.clearStraySessions(ctx, t)
+		err = d.clearStraySessions(ctx, t, seat.KandevExecutorID)
 	}
 	if err != nil {
 		return kandev.LaunchSessionResult{}, err
@@ -553,6 +578,48 @@ func (d *Dispatcher) start(ctx context.Context, t kandev.Task, profileID, priori
 		err = errors.New("session.launch returned success=false")
 	}
 	return res, err
+}
+
+// continueSession starts the released task's stopped seat session for the
+// task's current workflow step: Kandev resumes it on the seat and sends the
+// step's prompt in the same conversation. Live sessions Kandev started for
+// the task on another executor (its own host, when the task entered an
+// auto_start_agent step) are stopped first; the task environment is kept,
+// since the seat session still owns its directory on the seat.
+func (d *Dispatcher) continueSession(ctx context.Context, t kandev.Task, sessionID, seatExecutorID, priority string) (kandev.LaunchSessionResult, error) {
+	sessions, err := d.tasks.ListTaskSessions(ctx, t.ID)
+	if err != nil {
+		return kandev.LaunchSessionResult{}, fmt.Errorf("list the task's sessions: %w", err)
+	}
+	if !slices.ContainsFunc(sessions, func(s kandev.TaskSession) bool {
+		return s.ID == sessionID && s.ExecutorID == seatExecutorID
+	}) {
+		return kandev.LaunchSessionResult{}, errors.New("the released session is not on the seat")
+	}
+	for _, s := range sessions {
+		if s.ExecutorID == seatExecutorID || !s.Live() {
+			continue
+		}
+		if err := d.launcher.StopSession(ctx, s.ID, "fleetd: continuing the task in its session on the seat"); err != nil {
+			d.log.Warn("could not stop a session started away from the seat", "task_id", t.ID, "session_id", s.ID, "error", err)
+		}
+	}
+	res, err := d.launcher.LaunchSession(ctx, kandev.LaunchSessionInput{
+		TaskID: t.ID, Intent: kandev.IntentWorkflowStep, SessionID: sessionID,
+		WorkflowStepID: t.WorkflowStepID, Priority: priority,
+	})
+	if err == nil && !res.Success {
+		err = errors.New("session.launch returned success=false")
+	}
+	if err != nil {
+		return kandev.LaunchSessionResult{}, err
+	}
+	if res.SessionID == "" {
+		res.SessionID = sessionID
+	}
+	d.log.Info("continued a released task in its seat session", "task_id", t.ID, "session_id", sessionID,
+		"workflow_step_id", t.WorkflowStepID)
+	return res, nil
 }
 
 // takeOver clears a session Kandev prepared on its own host. Its environment
@@ -571,25 +638,18 @@ func (d *Dispatcher) takeOver(ctx context.Context, taskID, sessionID string) err
 }
 
 // clearStraySessions handles sessions Kandev started for the task on another
-// executor than its primary session's, such as its own host when a released
-// task entered an auto_start_agent step. Such a session built the task
-// environment there, and a seat launch cannot reuse it: fleetd stops the live
-// ones and resets the environment. The primary session's directory stays on
-// its seat.
-func (d *Dispatcher) clearStraySessions(ctx context.Context, t kandev.Task) error {
+// executor than the seat's, such as its own host when a released task entered
+// an auto_start_agent step. Such a session built the task environment there,
+// and a new seat launch cannot reuse it: fleetd stops the live ones and resets
+// the environment. The seat sessions' directories stay on the seat.
+func (d *Dispatcher) clearStraySessions(ctx context.Context, t kandev.Task, seatExecutorID string) error {
 	sessions, err := d.tasks.ListTaskSessions(ctx, t.ID)
 	if err != nil {
 		return fmt.Errorf("list the task's sessions: %w", err)
 	}
-	home := ""
-	for _, s := range sessions {
-		if s.ID == *t.PrimarySessionID {
-			home = s.ExecutorID
-		}
-	}
 	stray := false
 	for _, s := range sessions {
-		if s.ExecutorID == home {
+		if s.ExecutorID == seatExecutorID {
 			continue
 		}
 		stray = true
@@ -619,7 +679,7 @@ func (d *Dispatcher) backoff(attempt int) time.Duration {
 }
 
 // launch claims and starts one assignment; it reports whether it launched.
-func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileID, priority string, t kandev.Task) bool {
+func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileID, priority string, t kandev.Task, prior store.Claim) bool {
 	now := d.now()
 	attempt, err := d.store.BeginClaim(ctx, a.TaskID, a.SeatID, now)
 	if errors.Is(err, store.ErrAlreadyClaimed) {
@@ -629,7 +689,7 @@ func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileI
 		d.log.Error("claim failed", "task_id", a.TaskID, "seat_id", a.SeatID, "error", err)
 		return false
 	}
-	res, err := d.start(ctx, t, profileID, priority)
+	res, err := d.start(ctx, t, a.SeatID, profileID, priority, prior)
 	if err != nil {
 		if ferr := d.store.FinishClaim(context.WithoutCancel(ctx), a.TaskID, store.ClaimFailed, "", err.Error(), d.now()); ferr != nil {
 			d.log.Error("recording a failed launch failed", "task_id", a.TaskID, "error", ferr)
@@ -642,8 +702,8 @@ func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileI
 	}
 	d.log.Info("task launched", "task_id", a.TaskID, "seat_id", a.SeatID, "session_id", res.SessionID,
 		"priority", priority, "score", a.Score, "attempt", attempt)
-	// Kandev keeps the earlier session primary; the new one replaces it.
-	if t.PrimarySessionID != nil && res.SessionID != "" {
+	// Kandev keeps the earlier session primary; the launched one replaces it.
+	if t.PrimarySessionID != nil && res.SessionID != "" && *t.PrimarySessionID != res.SessionID {
 		if err := d.launcher.SetPrimarySession(ctx, res.SessionID); err != nil {
 			d.log.Warn("could not make the retried session primary", "task_id", a.TaskID, "session_id", res.SessionID, "error", err)
 		}
