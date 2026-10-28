@@ -49,10 +49,17 @@ const (
 const ResumePrompt = "The usage limit of this seat has reset. Continue the task from where you stopped. " +
 	"Do not redo finished work."
 
-// limitPattern matches what Claude Code reports when a subscription reaches
-// its 5-hour or weekly limit.
-var limitPattern = regexp.MustCompile(`(?i)(?:you['’]ve|you have) hit your (?:session|weekly|usage|5-hour) limit|` +
-	`\b(?:usage|session|weekly|5-hour|opus) limit reached`)
+// limitPattern matches the notice Claude Code reports when a subscription
+// reaches its 5-hour or weekly limit, at the start of a line and optionally
+// after an error prefix, like Kandev's routingerr rules. An agent that quotes
+// the notice inside prose does not match.
+var limitPattern = regexp.MustCompile(`(?im)^\s*(?:(?:api error|internal error|error):\s*)?` +
+	`(?:(?:you['’]ve|you have) hit your (?:session|weekly|usage|5-hour) limit|` +
+	`(?:claude ai |claude )?(?:usage|session|weekly|5-hour|opus) limit reached)\b`)
+
+// maxLimitNotice is the longest message read as a usage-limit notice. Claude
+// Code's notice is one short line; a longer message discusses the limit.
+const maxLimitNotice = 300
 
 // recentMessages is how many of a stopped session's newest messages are
 // searched for a usage-limit report.
@@ -201,7 +208,7 @@ func (t *Tracker) hitLimit(ctx context.Context, c store.Claim) bool {
 		if m.AuthorType == kandev.MessageAuthorUser {
 			return false
 		}
-		if limitPattern.MatchString(m.Content) {
+		if len(m.Content) <= maxLimitNotice && limitPattern.MatchString(m.Content) {
 			return true
 		}
 	}

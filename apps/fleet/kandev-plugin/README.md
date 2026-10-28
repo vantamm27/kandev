@@ -8,14 +8,17 @@ verified action identity, never the browser) and asks fleetd to move the task.
 
 In the fleet workspace it also:
 
-- shows each task's fleet status on its kanban card and in the chat top bar:
-  queued and why (for example the owner's seats wait for a usage limit that
-  resets at 14:20), running, in review, paused at the usage limit until the
-  reset, seat freed, retrying, or needing attention;
+- shows each task's fleet status in the chat top bar: queued and why (for
+  example the owner's seats wait for a usage limit that resets at 14:20),
+  running, in review, paused at the usage limit until the reset, seat freed,
+  retrying, or needing attention. Kanban cards show a badge only for the
+  statuses a member waits for or acts on (queued, starting, paused,
+  retrying, needing attention);
 - makes the member who creates a task its assignee, from Kandev's verified
   action identity, so the task can run on their seat, and reminds them in the
-  create dialog to use **Create task**: **Start task** runs it on the Kandev
-  host, which has no Claude login.
+  create dialog to pick **Create without starting agent** from the menu next
+  to **Start task**: **Start task** runs it on the Kandev host, which has no
+  Claude login.
 
 The plugin backend calls fleetd's admin API with the token in the plugin
 config, so the token never reaches the browser.

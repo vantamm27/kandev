@@ -99,6 +99,11 @@
 
   var TONES = { run: "#30a46c", wait: "#f5a524", idle: "#8b8d98", warn: "#f76b15", error: "#e5484d" };
 
+  // Task cards show only the statuses a member may need to act on or wait
+  // for; running and review are plain from the card's column, and the chat
+  // top bar shows every status.
+  var CARD_STATUSES = { waiting: true, starting: true, paused: true, retrying: true, exhausted: true };
+
   function shortId(id) {
     return id && id.length > 8 ? id.slice(0, 8) : id;
   }
@@ -513,7 +518,10 @@
       }
 
       function TaskCardBadge(props) {
-        var text = taskStatus(useFleetStatuses(), props.slotProps && props.slotProps.taskId);
+        var feed = useFleetStatuses();
+        var taskId = props.slotProps && props.slotProps.taskId;
+        var st = feed && feed.tasks && taskId ? feed.tasks[taskId] : null;
+        var text = st && CARD_STATUSES[st.status] ? statusText(st) : null;
         if (!text) return null;
         return jsx("span", {
           title: text.long,
@@ -562,8 +570,8 @@
         if (!inFleet || !register) return null;
         return jsx("span", {
           style: { fontSize: "12px", opacity: 0.75 },
-          title: "Fleet makes you the assignee and starts the task on your seat when it reaches the intake step. Use Create task: Start task runs it on the Kandev host, which has no Claude login.",
-          children: "Fleet: use Create task; it runs on your seat",
+          title: "Fleet makes you the assignee and starts the task on your seat. Open the menu next to Start task and pick Create without starting agent: Start task runs it on the Kandev host, which has no Claude login.",
+          children: "Fleet: Start task \u25be > Create without starting agent",
         });
       }
 

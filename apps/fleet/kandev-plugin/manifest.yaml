@@ -1,7 +1,7 @@
 id: "kandev-fleet"
 api_version: 2
 min_kandev_version: "0.91.1"
-version: "0.3.0"
+version: "0.3.2"
 display_name: "Fleet"
 description: "Seats, usage limits, and handoffs for the fleetd seat pool"
 author: "vantamm27"

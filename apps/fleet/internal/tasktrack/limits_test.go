@@ -159,3 +159,25 @@ func TestAnOlderLimitReportDoesNotPauseAgain(t *testing.T) {
 		t.Fatal("only a limit report newer than the last prompt pauses the task")
 	}
 }
+
+func TestLimitNoticeMatching(t *testing.T) {
+	for text, want := range map[string]bool{
+		"You've hit your session limit · resets 3pm (UTC)":                                                true,
+		"You have hit your weekly limit · resets Oct 30, 9am":                                             true,
+		"Claude AI usage limit reached|1761660000":                                                        true,
+		"5-hour limit reached ∙ resets 3pm":                                                               true,
+		"Error: You've hit your session limit · resets 3pm":                                               true,
+		"API Error: Claude AI usage limit reached. Try again at 3pm.":                                     true,
+		"I won't output a fake notice such as \"You have hit your session limit\".":                       false,
+		"The README now explains what happens when the usage limit reached its cap.":                      false,
+		"> You have hit your session limit":                                                               false,
+		"You've hit your session limit · resets 3pm\n" + strings.Repeat("Here is why this matters. ", 20): false,
+	} {
+		msgs := []kandev.SessionMessage{{AuthorType: "agent", Content: text}}
+		withMessages(t, map[string][]kandev.SessionMessage{"session-task-1": msgs})
+		tr := newTracker(launchedStore(t, "task-1"), &fakeSessions{})
+		if got := tr.hitLimit(context.Background(), store.Claim{TaskID: "task-1", SessionID: "session-task-1"}); got != want {
+			t.Errorf("hitLimit(%q) = %v, want %v", text, got, want)
+		}
+	}
+}
