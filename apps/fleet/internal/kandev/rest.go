@@ -88,6 +88,16 @@ func (c *Client) ListTaskSessions(ctx context.Context, taskID string) ([]TaskSes
 	return out.Sessions, err
 }
 
+// ListRecentMessages returns a session's newest messages, newest first.
+func (c *Client) ListRecentMessages(ctx context.Context, sessionID string, limit int) ([]SessionMessage, error) {
+	var out struct {
+		Messages []SessionMessage `json:"messages"`
+	}
+	path := fmt.Sprintf("/api/v1/task-sessions/%s/messages?sort=desc&limit=%d", url.PathEscape(sessionID), limit)
+	err := c.do(ctx, http.MethodGet, path, nil, &out)
+	return out.Messages, err
+}
+
 // GetWorkflowStep reads one workflow step.
 func (c *Client) GetWorkflowStep(ctx context.Context, id string) (WorkflowStep, error) {
 	var out struct {

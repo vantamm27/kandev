@@ -1,8 +1,10 @@
 // kandev-fleet native UI: a Fleet page with seats, the dispatch queue, task
-// stats, and handoff offers. Data comes from the plugin backend's actions,
-// which call fleetd with the admin token kept in plugin config. Seat
-// management uses an admin-only action; Kandev enforces it, and the page only
-// hides the controls from members.
+// stats, and handoff offers; a fleet status badge on task cards and in the
+// chat top bar; and, in the task create dialog of the fleet workspace, a hint
+// plus a handler that makes the creator the new task's assignee. Data comes
+// from the plugin backend's actions, which call fleetd with the admin token
+// kept in plugin config. Seat management uses an admin-only action; Kandev
+// enforces it, and the page only hides the controls from members.
 (function () {
   "use strict";
 
@@ -11,14 +13,15 @@
   var WAIT_REASONS = {
     no_seat: "owner has no live seat",
     labels: "no owner seat has the required labels",
-    seats_full: "owner seats are busy or cooling down",
+    seats_full: "owner seats are busy",
+    quota_cooldown: "owner seats wait for their usage limit to reset",
     quota: "not enough quota left",
     weekly_pacing: "weekly usage ahead of pace",
     unknown_priority: "unknown priority",
     no_assignee: "nobody is assigned; use Assign to me in the task's top bar",
   };
 
-  var OUTCOMES = ["running", "launching", "released", "completed", "cancelled", "failed", "deleted", "launch_failed"];
+  var OUTCOMES = ["running", "paused", "launching", "released", "completed", "cancelled", "failed", "deleted", "launch_failed"];
 
   function pct(value) {
     return typeof value === "number" ? value.toFixed(0) + "%" : "-";
@@ -43,6 +46,58 @@
     var d = new Date(iso);
     return isNaN(d.getTime()) ? "-" : d.toLocaleString();
   }
+
+  function clock(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    return isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  }
+
+  // statusText describes a task's fleet status: a short label for a task card
+  // and a sentence for the chat top bar and the card's tooltip.
+  function statusText(st) {
+    var reset = clock(st.reset_at);
+    switch (st.status) {
+      case "waiting":
+        if (st.reason === "no_assignee") {
+          return { tone: "warn", short: "Fleet: no assignee", long: "Fleet cannot start this task: nobody is assigned. Assign it to the member whose seat should run it." };
+        }
+        if (st.reason === "quota_cooldown") {
+          return {
+            tone: "wait",
+            short: reset ? "Fleet: quota, " + reset : "Fleet: quota",
+            long: "Waiting for a seat: the owner's seats hit their usage limit" + (reset ? " and reset at " + reset : "") + ".",
+          };
+        }
+        return { tone: "wait", short: "Fleet: queued", long: "Waiting for a seat: " + (WAIT_REASONS[st.reason] || st.reason) + "." };
+      case "starting":
+        return { tone: "run", short: "Fleet: starting", long: "Fleet is starting this task on " + st.seat_id + "." };
+      case "running":
+        return { tone: "run", short: "Fleet: running", long: "Running on seat " + st.seat_id + "." };
+      case "review":
+        return { tone: "idle", short: "Fleet: in review", long: "Waiting for review on seat " + st.seat_id + ". The session stays open until another task needs the seat." };
+      case "paused":
+        return {
+          tone: "wait",
+          short: reset ? "Fleet: paused until " + reset : "Fleet: paused",
+          long: "Stopped at the seat's usage limit. Fleet continues it automatically" + (reset ? " after the reset at " + reset : " when the limit resets") + ".",
+        };
+      case "released":
+        return { tone: "idle", short: "Fleet: seat freed", long: "The seat was freed for another task. Fleet runs this task again when its workflow moves it to an agent step." };
+      case "retrying":
+        return {
+          tone: "warn",
+          short: "Fleet: retry " + st.attempt + "/" + st.max_attempts,
+          long: "The last run failed (" + (st.last_error || "unknown error") + "). Fleet retries it" + (st.retry_at ? " at " + clock(st.retry_at) : "") + ".",
+        };
+      case "exhausted":
+        return { tone: "error", short: "Fleet: needs attention", long: "Fleet gave up after " + st.attempt + " attempts (" + (st.last_error || "unknown error") + "). Check the task and move it back to the intake step to retry." };
+      default:
+        return null;
+    }
+  }
+
+  var TONES = { run: "#30a46c", wait: "#f5a524", idle: "#8b8d98", warn: "#f76b15", error: "#e5484d" };
 
   function shortId(id) {
     return id && id.length > 8 ? id.slice(0, 8) : id;
@@ -411,6 +466,110 @@
         });
       }
 
+      // One shared poll of fleetd's task statuses feeds every badge, while
+      // at least one is mounted.
+      var statusFeed = { data: null, listeners: [], timer: null };
+
+      function pollStatuses() {
+        if (document.hidden && statusFeed.data) return;
+        invoke("fleet.task.status")
+          .then(function (data) {
+            statusFeed.data = data;
+          })
+          .catch(function () {
+            statusFeed.data = statusFeed.data || { tasks: {} };
+          })
+          .finally(function () {
+            statusFeed.listeners.forEach(function (fn) {
+              fn(statusFeed.data);
+            });
+          });
+      }
+
+      function useFleetStatuses() {
+        var state = React.useState(statusFeed.data);
+        React.useEffect(function () {
+          statusFeed.listeners.push(state[1]);
+          if (statusFeed.listeners.length === 1) {
+            pollStatuses();
+            statusFeed.timer = setInterval(pollStatuses, REFRESH_MS);
+          }
+          return function () {
+            statusFeed.listeners = statusFeed.listeners.filter(function (fn) {
+              return fn !== state[1];
+            });
+            if (!statusFeed.listeners.length) {
+              clearInterval(statusFeed.timer);
+              statusFeed.timer = null;
+            }
+          };
+        }, []);
+        return state[0];
+      }
+
+      function taskStatus(feed, taskId) {
+        var st = feed && feed.tasks && taskId ? feed.tasks[taskId] : null;
+        return st ? statusText(st) : null;
+      }
+
+      function TaskCardBadge(props) {
+        var text = taskStatus(useFleetStatuses(), props.slotProps && props.slotProps.taskId);
+        if (!text) return null;
+        return jsx("span", {
+          title: text.long,
+          style: {
+            fontSize: "11px",
+            lineHeight: "16px",
+            padding: "0 6px",
+            borderRadius: "8px",
+            whiteSpace: "nowrap",
+            color: TONES[text.tone],
+            border: "1px solid " + TONES[text.tone],
+          },
+          children: text.short,
+        });
+      }
+
+      function ChatTopBarStatus(props) {
+        var text = taskStatus(useFleetStatuses(), props.slotProps && props.slotProps.taskId);
+        if (!text) return null;
+        return jsx("span", {
+          role: "status",
+          title: text.long,
+          style: { fontSize: "12px", color: TONES[text.tone], maxWidth: "420px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+          children: text.long,
+        });
+      }
+
+      // TaskCreateHint makes the member who creates a task in the fleet
+      // workspace its assignee, and says how fleet runs it.
+      function TaskCreateHint(props) {
+        var slot = props.slotProps || {};
+        var feed = useFleetStatuses();
+        var inFleet = Boolean(feed && feed.workspace_id && feed.workspace_id === activeWorkspaceId());
+        var register = slot.registerTaskCreatedHandler;
+        React.useEffect(
+          function () {
+            if (!inFleet || typeof register !== "function") return undefined;
+            return register(function (task) {
+              return host.api
+                .invokeAction("fleet.task.created", { workspaceId: task.workspace_id, body: { taskId: task.id } })
+                .catch(function () {});
+            });
+          },
+          [inFleet, register],
+        );
+        if (!inFleet || !register) return null;
+        return jsx("span", {
+          style: { fontSize: "12px", opacity: 0.75 },
+          title: "Fleet makes you the assignee and starts the task on your seat when it reaches the intake step. Use Create task: Start task runs it on the Kandev host, which has no Claude login.",
+          children: "Fleet: use Create task; it runs on your seat",
+        });
+      }
+
+      registry.registerComponent("task-card-indicators", TaskCardBadge);
+      registry.registerComponent("chat-top-bar", ChatTopBarStatus);
+      registry.registerComponent("task-create-input-actions", TaskCreateHint);
       registry.registerRoute("/fleet", FleetPage);
       registry.registerNavItem({ id: "fleet", label: "Fleet", path: "/fleet", icon: "users" });
     },

@@ -19,6 +19,14 @@ var now = time.Date(2026, 10, 27, 4, 0, 0, 0, time.UTC)
 
 type fakeTasks map[string]kandev.Task
 
+func (f fakeTasks) ListRecentMessages(_ context.Context, sessionID string, limit int) ([]kandev.SessionMessage, error) {
+	msgs := messagesOf[sessionID]
+	if len(msgs) > limit {
+		msgs = msgs[:limit]
+	}
+	return msgs, nil
+}
+
 func (f fakeTasks) GetTask(_ context.Context, id string) (kandev.Task, error) {
 	if id == "task-down" {
 		return kandev.Task{}, errors.New("kandev unreachable")
@@ -30,7 +38,18 @@ func (f fakeTasks) GetTask(_ context.Context, id string) (kandev.Task, error) {
 	return t, nil
 }
 
-type fakeSessions struct{ stopped []string }
+// messagesOf holds the newest-first messages a test's sessions return.
+var messagesOf map[string][]kandev.SessionMessage
+
+type fakeSessions struct {
+	stopped []string
+	sent    []string
+}
+
+func (f *fakeSessions) AddMessage(_ context.Context, taskID, sessionID, content string) error {
+	f.sent = append(f.sent, taskID+"/"+sessionID+": "+content)
+	return nil
+}
 
 func (f *fakeSessions) StopSession(_ context.Context, sessionID, _ string) error {
 	f.stopped = append(f.stopped, sessionID)
@@ -191,5 +210,9 @@ func TestReleaseKeepsTheClaimWhenStoppingFails(t *testing.T) {
 type failingSessions struct{}
 
 func (failingSessions) StopSession(context.Context, string, string) error {
+	return errors.New("kandev unreachable")
+}
+
+func (failingSessions) AddMessage(context.Context, string, string, string) error {
 	return errors.New("kandev unreachable")
 }

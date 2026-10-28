@@ -23,6 +23,11 @@ const (
 	actionOverview = "fleet.overview"
 	actionAccept   = "fleet.handoff.accept"
 	actionTasks    = "fleet.tasks"
+	// actionTaskStatus reports what fleetd does with each task, for the
+	// badges on task cards and in the chat top bar.
+	actionTaskStatus = "fleet.task.status"
+	// actionTaskCreated makes the member who created a task its assignee.
+	actionTaskCreated = "fleet.task.created"
 	// actionManageSeat is admin-only in the manifest, so Kandev rejects
 	// members before the plugin sees the request.
 	actionManageSeat = "fleet.seat.manage"
@@ -124,6 +129,14 @@ func (p *fleetPlugin) HandleAction(ctx context.Context, req *pluginsdk.PluginAct
 			return upstream(err)
 		}
 		return reply(http.StatusOK, out)
+	case actionTaskStatus:
+		var out json.RawMessage
+		if err := p.call(ctx, cfg, http.MethodGet, "/v1/admin/tasks/status", nil, &out); err != nil {
+			return fleetdFailure(err)
+		}
+		return reply(http.StatusOK, out)
+	case actionTaskCreated:
+		return p.taskCreated(ctx, cfg, req.Context.ActorID, req.Body)
 	case actionManageSeat:
 		return p.manageSeat(ctx, cfg, req.Context.ActorID, req.Body)
 	default:
@@ -188,6 +201,31 @@ func (p *fleetPlugin) manageSeat(ctx context.Context, cfg fleetdConfig, actor st
 	logger.Info("seat changed", "seat_id", in.SeatID, "op", in.Op, "actor", actor)
 	return reply(http.StatusOK, result)
 }
+
+// taskCreated asks fleetd to make the actor the assignee of the task they
+// just created. The actor comes from Kandev's verified action context, so a
+// member cannot assign a task to someone else; fleetd leaves tasks outside
+// its workspace and tasks that already have an assignee alone.
+func (p *fleetPlugin) taskCreated(ctx context.Context, cfg fleetdConfig, actor string, body []byte) (*pluginsdk.PluginActionResponse, error) {
+	var in struct {
+		TaskID string `json:"taskId"`
+	}
+	if err := json.Unmarshal(body, &in); err != nil || !taskIDPattern.MatchString(in.TaskID) {
+		return reply(http.StatusBadRequest, map[string]string{"error": "taskId is required"})
+	}
+	if actor == "" {
+		return reply(http.StatusUnauthorized, map[string]string{"error": "sign in to create fleet tasks"})
+	}
+	var result map[string]string
+	if err := p.call(ctx, cfg, http.MethodPost, "/v1/admin/tasks/"+in.TaskID+"/assign-creator",
+		map[string]string{"user_id": actor}, &result); err != nil {
+		return fleetdFailure(err)
+	}
+	return reply(http.StatusOK, result)
+}
+
+// taskIDPattern keeps the task ID a single path segment.
+var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 
 // seatIDPattern keeps the seat ID a single path segment.
 var seatIDPattern = regexp.MustCompile(`^seat_[A-Za-z0-9]+$`)

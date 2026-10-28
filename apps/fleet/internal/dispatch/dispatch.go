@@ -63,6 +63,34 @@ type Stats struct {
 	WaitingTasks []WaitingTask
 	// Titles maps each claimed task the round listed to its title.
 	Titles map[string]string
+	// Tasks is what fleetd does with each workspace task it queued or
+	// claimed, as of the end of the round.
+	Tasks map[string]TaskStatus
+}
+
+// Task statuses for the Kandev UI.
+const (
+	StatusWaiting  = "waiting"  // queued; Reason says why it has not started
+	StatusStarting = "starting" // a launch is in flight
+	StatusRunning  = "running"
+	StatusReview   = "review"   // waiting in REVIEW with its session kept
+	StatusPaused   = "paused"   // stopped at its seat's usage limit until ResetAt
+	StatusReleased = "released" // its seat was freed; it runs again when its workflow goes on
+	StatusRetrying = "retrying" // its launch or session failed; retried from RetryAt
+	// StatusExhausted: its attempts are used up and a person must decide.
+	StatusExhausted = "exhausted"
+)
+
+// TaskStatus is what fleetd does with one task.
+type TaskStatus struct {
+	Status      string     `json:"status"`
+	Reason      string     `json:"reason,omitempty"`
+	SeatID      string     `json:"seat_id,omitempty"`
+	ResetAt     *time.Time `json:"reset_at,omitempty"`
+	Attempt     int        `json:"attempt,omitempty"`
+	MaxAttempts int        `json:"max_attempts,omitempty"`
+	RetryAt     *time.Time `json:"retry_at,omitempty"`
+	LastError   string     `json:"last_error,omitempty"`
 }
 
 // WaitingTask is a queued task the round could not start, and why.
@@ -80,10 +108,12 @@ type LimitScanner interface {
 }
 
 // TaskTracker records the Kandev state of launched tasks from the round's
-// claims and the workspace tasks the round listed, and frees seats held by
-// tasks in review for owners whose queued tasks wait for a full seat.
+// claims and the workspace tasks the round listed, continues tasks paused at
+// a usage limit that reset, and frees seats held by tasks in review for
+// owners whose queued tasks wait for a full seat.
 type TaskTracker interface {
 	Track(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error
+	Resume(ctx context.Context, now time.Time) error
 	Release(ctx context.Context, demand map[string]int, seatOwners map[string]string, listed map[string]kandev.Task, now time.Time) error
 }
 
@@ -224,6 +254,12 @@ func (d *Dispatcher) Round(ctx context.Context) error {
 		}
 	}
 	d.postRound(ctx, claims, listed, seatDemand(plan, listed), workingSeatOwners(seats))
+	if after, err := d.store.ListClaims(ctx); err != nil {
+		d.log.Warn("cannot read claims for task statuses", "error", err)
+	} else {
+		claims = after
+	}
+	stats.Tasks = d.statuses(listed, claims, plan.Waiting, seats)
 	d.mu.Lock()
 	d.last = stats
 	d.launched += int64(stats.Launched)
@@ -237,6 +273,9 @@ func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Clai
 	if d.Tracker != nil {
 		if err := d.Tracker.Track(ctx, claims, listed, d.now()); err != nil {
 			d.log.Warn("task state tracking failed", "error", err)
+		}
+		if err := d.Tracker.Resume(ctx, d.now()); err != nil {
+			d.log.Warn("resuming tasks paused at a usage limit failed", "error", err)
 		}
 		if err := d.Tracker.Release(ctx, demand, seatOwners, listed, d.now()); err != nil {
 			d.log.Warn("freeing seats held in review failed", "error", err)
@@ -256,10 +295,10 @@ func (d *Dispatcher) postRound(ctx context.Context, claims map[string]store.Clai
 }
 
 // intakeTasks lists the tasks waiting for a seat that fleetd may launch. A
-// task waits when it is assigned and in an intake step, when it was created
-// with the fleet agent profile and not started, or when fleetd released its
-// seat and its workflow went on. It also returns every workspace task it
-// read.
+// task waits when it is in an intake step, when it was created with the
+// fleet agent profile and not started, when fleetd released its seat and its
+// workflow went on, or when its launch or session failed. An unassigned task
+// waits with no_assignee. It also returns every workspace task it read.
 func (d *Dispatcher) intakeTasks(ctx context.Context, claims map[string]store.Claim) ([]kandev.Task, map[string]kandev.Task, error) {
 	var out []kandev.Task
 	listed := map[string]kandev.Task{}
@@ -291,12 +330,13 @@ func (d *Dispatcher) waitsForSeat(ctx context.Context, t kandev.Task, claims map
 	case store.ClaimReleased:
 		return d.workflowWentOn(ctx, t, c, agentSteps)
 	case store.ClaimFailed:
-		// fleetd's own launch failed: retry it wherever the workflow is now.
-		if !kandev.TaskDone(t.State) {
+		// fleetd's launch or its session failed: retry it wherever the
+		// workflow is now. A session failure can leave the task in REVIEW.
+		if !kandev.TaskDone(t.State) || t.PrimarySessionIs(kandev.SessionStateFailed) {
 			return true
 		}
 	}
-	if slices.Contains(d.cfg.IntakeStepIDs, t.WorkflowStepID) && t.AssigneeUserID != "" {
+	if slices.Contains(d.cfg.IntakeStepIDs, t.WorkflowStepID) {
 		return true
 	}
 	return t.PrimaryAgentProfileID == d.cfg.AgentProfileID && !kandev.TaskDone(t.State)
@@ -420,7 +460,7 @@ func (d *Dispatcher) seats(ctx context.Context) ([]schedule.Seat, map[string]str
 		}
 		seats = append(seats, schedule.Seat{
 			ID: s.ID, OwnerUserID: s.OwnerUserID, State: s.State, FreeSlots: free, Labels: s.Labels,
-			Quota5hPct: s.Quota5hPct, QuotaWeekPct: s.QuotaWeekPct, ResetWeekAt: s.ResetWeekAt,
+			Quota5hPct: s.Quota5hPct, QuotaWeekPct: s.QuotaWeekPct, Reset5hAt: s.Reset5hAt, ResetWeekAt: s.ResetWeekAt,
 		})
 		profiles[s.ID] = s.KandevExecutorProfileID
 	}
@@ -428,8 +468,8 @@ func (d *Dispatcher) seats(ctx context.Context) ([]schedule.Seat, map[string]str
 }
 
 // candidates drops tasks fleetd already launched, tasks still backing off,
-// and tasks out of attempts. A released task is pinned to the seat that
-// holds its environment.
+// and tasks out of attempts. A released task, and a failed one with a
+// session, is pinned to the seat that holds its environment.
 func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Claim, now time.Time) ([]schedule.Task, int) {
 	out := make([]schedule.Task, 0, len(tasks))
 	exhausted := 0
@@ -447,6 +487,9 @@ func (d *Dispatcher) candidates(tasks []kandev.Task, claims map[string]store.Cla
 			}
 			if now.Before(c.UpdatedAt.Add(d.backoff(c.Attempt))) {
 				continue
+			}
+			if t.PrimarySessionID != nil {
+				pin = c.SeatID
 			}
 		}
 		priority := t.Priority
@@ -576,4 +619,78 @@ func (d *Dispatcher) launch(ctx context.Context, a schedule.Assignment, profileI
 		}
 	}
 	return true
+}
+
+// statuses reports what fleetd does with each listed task it claimed or
+// queued: the round's waiting reasons override the claim, since a failed
+// task that waits again says why it has not restarted.
+func (d *Dispatcher) statuses(listed map[string]kandev.Task, claims map[string]store.Claim,
+	waiting []schedule.Waiting, seats []schedule.Seat) map[string]TaskStatus {
+	byID := make(map[string]schedule.Seat, len(seats))
+	for _, s := range seats {
+		byID[s.ID] = s
+	}
+	out := map[string]TaskStatus{}
+	for id, c := range claims {
+		t, ok := listed[id]
+		if !ok {
+			continue
+		}
+		if st, ok := d.claimStatus(t, c, byID[c.SeatID]); ok {
+			out[id] = st
+		}
+	}
+	for _, w := range waiting {
+		st := TaskStatus{Status: StatusWaiting, Reason: w.Reason}
+		if w.Reason == schedule.ReasonCooldown {
+			st.ResetAt = earliestReset(seats, listed[w.TaskID].AssigneeUserID)
+		}
+		out[w.TaskID] = st
+	}
+	return out
+}
+
+func (d *Dispatcher) claimStatus(t kandev.Task, c store.Claim, seat schedule.Seat) (TaskStatus, bool) {
+	st := TaskStatus{SeatID: c.SeatID}
+	switch {
+	case c.State == store.ClaimLaunching:
+		st.Status = StatusStarting
+	case c.State == store.ClaimReleased:
+		st.Status = StatusReleased
+	case c.State == store.ClaimFailed:
+		if kandev.TaskDone(t.State) && !t.PrimarySessionIs(kandev.SessionStateFailed) {
+			return TaskStatus{}, false
+		}
+		st.Attempt, st.MaxAttempts, st.LastError = c.Attempt, d.cfg.MaxAttempts, c.LastError
+		if c.Attempt >= d.cfg.MaxAttempts {
+			st.Status = StatusExhausted
+			break
+		}
+		st.Status = StatusRetrying
+		retryAt := c.UpdatedAt.Add(d.backoff(c.Attempt))
+		st.RetryAt = &retryAt
+	case c.FinishedAt != nil:
+		return TaskStatus{}, false
+	case c.PausedAt != nil:
+		st.Status, st.ResetAt = StatusPaused, seat.LimitResetAt()
+	case c.TaskState == kandev.TaskStateReview:
+		st.Status = StatusReview
+	default:
+		st.Status = StatusRunning
+	}
+	return st, true
+}
+
+// earliestReset is the first limit reset among an owner's cooling seats.
+func earliestReset(seats []schedule.Seat, owner string) *time.Time {
+	var first *time.Time
+	for _, s := range seats {
+		if s.OwnerUserID != owner || !s.CoolingDown() {
+			continue
+		}
+		if at := s.LimitResetAt(); at != nil && (first == nil || at.Before(*first)) {
+			first = at
+		}
+	}
+	return first
 }

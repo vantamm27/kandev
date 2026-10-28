@@ -177,6 +177,18 @@ func TestListTaskSessions(t *testing.T) {
 	}
 }
 
+func TestListRecentMessages(t *testing.T) {
+	client, rec := restServer(t, http.StatusOK,
+		`{"messages":[{"id":"m-2","author_type":"agent","type":"error","content":"You've hit your session limit"},{"id":"m-1","author_type":"user","content":"go"}],"has_more":true}`)
+	msgs, err := client.ListRecentMessages(context.Background(), "sess-1", 5)
+	if err != nil || len(msgs) != 2 || msgs[0].AuthorType != "agent" || msgs[0].Type != "error" || msgs[1].AuthorType != MessageAuthorUser {
+		t.Fatalf("ListRecentMessages = %+v, %v", msgs, err)
+	}
+	if rec.Method != http.MethodGet || rec.Path != "/api/v1/task-sessions/sess-1/messages" || rec.RawQuery != "sort=desc&limit=5" {
+		t.Fatalf("request = %s %s?%s", rec.Method, rec.Path, rec.RawQuery)
+	}
+}
+
 func TestGetWorkflowStepReadsOnEnterActions(t *testing.T) {
 	client, rec := restServer(t, http.StatusOK,
 		`{"step":{"id":"step-1","name":"Plan","events":{"on_enter":[{"type":"enable_plan_mode"},{"type":"auto_start_agent"}]}}}`)

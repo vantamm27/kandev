@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -119,8 +120,12 @@ func TestStatesThatDoNotTakeWork(t *testing.T) {
 	for _, state := range []string{"busy", "cooldown_5h", "cooldown_week", "draining", "offline", "retired"} {
 		s := Seat{ID: "a1", OwnerUserID: "a", State: state, FreeSlots: 1}
 		plan := Schedule([]Task{task("t", "a", PriorityCritical, 0)}, []Seat{s}, now, DefaultPolicy())
-		if len(plan.Assignments) != 0 || waiting(plan)["t"] != ReasonFull {
-			t.Fatalf("state %s took work: %+v", state, plan)
+		want := ReasonFull
+		if strings.HasPrefix(state, "cooldown") {
+			want = ReasonCooldown
+		}
+		if len(plan.Assignments) != 0 || waiting(plan)["t"] != want {
+			t.Fatalf("state %s: %+v; want no work and reason %s", state, plan, want)
 		}
 	}
 }

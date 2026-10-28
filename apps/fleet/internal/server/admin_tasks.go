@@ -1,11 +1,14 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/kandev/kandev/apps/fleet/internal/dispatch"
+	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
@@ -46,6 +49,62 @@ type queueView struct {
 	At      *time.Time             `json:"at,omitempty"`
 	Queued  map[string]int         `json:"queued"`
 	Waiting []dispatch.WaitingTask `json:"waiting"`
+}
+
+// TaskOwnerAssigner assigns a new task to the member who created it.
+type TaskOwnerAssigner interface {
+	AssignCreator(ctx context.Context, taskID, userID string) (string, error)
+}
+
+// handleTaskStatuses reports the dispatcher's workspace and what fleetd does
+// with each task it queued or claimed, as of the last round.
+func (s *Server) handleTaskStatuses(w http.ResponseWriter, _ *http.Request) {
+	if s.deps.Rounds == nil {
+		writeError(w, http.StatusNotFound, "the dispatcher is disabled")
+		return
+	}
+	round := s.deps.Rounds.LastRound()
+	body := map[string]any{"workspace_id": s.deps.WorkspaceID, "tasks": round.Tasks}
+	if round.Tasks == nil {
+		body["tasks"] = map[string]dispatch.TaskStatus{}
+	}
+	if !round.At.IsZero() {
+		body["at"] = round.At
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+// handleAssignCreator assigns an unassigned task in the fleet workspace to
+// the user who created it.
+func (s *Server) handleAssignCreator(w http.ResponseWriter, r *http.Request) {
+	if s.deps.Assigner == nil {
+		writeError(w, http.StatusNotFound, "the dispatcher is disabled")
+		return
+	}
+	var body struct {
+		UserID string `json:"user_id"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.UserID) == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	id := r.PathValue("id")
+	result, err := s.deps.Assigner.AssignCreator(r.Context(), id, body.UserID)
+	switch {
+	case kandev.IsNotFound(err):
+		writeError(w, http.StatusNotFound, "task not found")
+	case err != nil:
+		s.deps.Log.Warn("assigning a task to its creator failed", "task_id", id, "error", err)
+		writeError(w, http.StatusBadGateway, "kandev: "+err.Error())
+	default:
+		if result == dispatch.AssignDone {
+			s.deps.Log.Info("task assigned to its creator", "task_id", id, "user_id", body.UserID)
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"task_id": id, "result": result})
+	}
 }
 
 // handleListTasks reports the queue as of the last round, recent tasks, and

@@ -27,7 +27,11 @@ const (
 )
 
 // Seat states the scheduler cares about.
-const seatOnline = "online"
+const (
+	seatOnline       = "online"
+	seatCooldown5h   = "cooldown_5h"
+	seatCooldownWeek = "cooldown_week"
+)
 
 // Task is a queued task waiting for a seat.
 type Task struct {
@@ -51,7 +55,25 @@ type Seat struct {
 	Labels       []string
 	Quota5hPct   *float64
 	QuotaWeekPct *float64
+	Reset5hAt    *time.Time
 	ResetWeekAt  *time.Time
+}
+
+// CoolingDown reports whether the seat waits for its usage limit to reset.
+func (s Seat) CoolingDown() bool {
+	return s.State == seatCooldown5h || s.State == seatCooldownWeek
+}
+
+// LimitResetAt is when a cooling seat's limit resets, if known.
+func (s Seat) LimitResetAt() *time.Time {
+	switch s.State {
+	case seatCooldown5h:
+		return s.Reset5hAt
+	case seatCooldownWeek:
+		return s.ResetWeekAt
+	default:
+		return nil
+	}
 }
 
 // Class is one priority's ordering and gating parameters.
@@ -91,11 +113,12 @@ func DefaultPolicy() Policy {
 
 // Reasons a task did not start this round.
 const (
-	ReasonNoSeat   = "no_seat"       // its owner has no live seat
-	ReasonLabels   = "labels"        // no owner seat has the required labels
-	ReasonFull     = "seats_full"    // owner seats are busy or cooling down
-	ReasonQuota    = "quota"         // remaining quota below the estimated cost
-	ReasonPacing   = "weekly_pacing" // weekly usage ahead of even spend
+	ReasonNoSeat   = "no_seat"        // its owner has no live seat
+	ReasonLabels   = "labels"         // no owner seat has the required labels
+	ReasonFull     = "seats_full"     // owner seats are busy
+	ReasonCooldown = "quota_cooldown" // owner seats wait for their usage limit to reset
+	ReasonQuota    = "quota"          // remaining quota below the estimated cost
+	ReasonPacing   = "weekly_pacing"  // weekly usage ahead of even spend
 	ReasonPriority = "unknown_priority"
 	// ReasonNoAssignee: Kandev does not record who created a task, so an
 	// unassigned task has no owner whose seats could run it.
@@ -212,6 +235,9 @@ func seatReason(t Task, s Seat, freeSlots int, class Class, now time.Time, p Pol
 	if !hasLabels(s.Labels, t.RequiredLabels) {
 		return ReasonLabels
 	}
+	if s.CoolingDown() {
+		return ReasonCooldown
+	}
 	if s.State != seatOnline || freeSlots <= 0 {
 		return ReasonFull
 	}
@@ -226,7 +252,7 @@ func seatReason(t Task, s Seat, freeSlots int, class Class, now time.Time, p Pol
 
 // reasonRank orders reasons from least to most specific, so a task reports
 // the closest it came to starting.
-var reasonRank = map[string]int{ReasonNoSeat: 0, ReasonLabels: 1, ReasonFull: 2, ReasonQuota: 3, ReasonPacing: 4}
+var reasonRank = map[string]int{ReasonNoSeat: 0, ReasonLabels: 1, ReasonCooldown: 2, ReasonFull: 3, ReasonQuota: 4, ReasonPacing: 5}
 
 func moreSpecific(a, b string) string {
 	if reasonRank[b] > reasonRank[a] {

@@ -85,19 +85,22 @@ FLEET_KANDEV_TOKEN=kandev_pat_... \
 Each round fleetd lists the workspace's tasks and picks those waiting for a
 seat:
 
-- tasks in an intake step with a human assignee,
+- tasks in an intake step,
 - tasks created with the fleet agent profile (`FLEET_AGENT_PROFILE_ID`) and not
   started, in any step. In the web UI: pick that profile, choose **Create
   without starting agent**, then **Assign to me** in the task's top bar, and
 - released tasks (see [Custom workflows](#custom-workflows)) whose workflow
-  went on, pinned to the seat that holds their environment.
+  went on, pinned to the seat that holds their environment, and
+- tasks whose launch or session failed (see [Stops and retries](#stops-and-retries)).
 
 A task waits only if it has no session, or its only session is fleetd's own
 failed launch, or a session that never sent a prompt. The web UI prepares such
 a session on Kandev's own host when a task is created or opened; fleetd stops
 it and resets the task environment before launching on a seat. A fleet task
 without an assignee waits with reason `no_assignee`, since Kandev does not
-record who created a task and fleetd only runs work on its owner's seats.
+record who created a task and fleetd only runs work on its owner's seats. The
+Kandev plugin makes the member who creates a task in the fleet workspace its
+assignee (see [the plugin](kandev-plugin/README.md)).
 Create tasks through the API with `start_agent=false` (for example
 `create_task_kandev` with `assignee_user_id: "me"`), otherwise Kandev starts
 them on its default executor. The schedule package orders them (priority plus capped aging) and
@@ -113,10 +116,37 @@ After each round fleetd also:
 - **Nudges** running tasks on a seat whose reported 5-hour or weekly usage is
   at least 85 %: a `message.add` asks the agent to update PROGRESS.md, commit,
   and push to `refs/agent-wip/<task>`. At most once per task per 5 hours.
-- **Offers handoffs** for launched tasks on a seat at its weekly limit, or at
-  its 5-hour limit with the reset unknown or more than 2 hours away. Shorter
-  5-hour waits are left to the Kandev dynamic profile. Accept with
+- **Offers handoffs** for tasks that still need a seat at its weekly limit, or
+  at its 5-hour limit with the reset unknown or more than 2 hours away:
+  launched tasks that are not done, tasks paused at the limit, and tasks whose
+  session failed there. A task in `REVIEW` for a person is not offered.
+  Shorter 5-hour waits end with the automatic resume below. Accept with
   `POST /v1/admin/handoffs/{id}/accept`.
+
+Waiting reasons are `no_assignee`, `unknown_priority`, `no_seat`, `labels`,
+`quota_cooldown` (the owner's seats wait for their usage limit to reset),
+`seats_full` (they are busy), `quota` (less left than a task's estimated
+cost), and `weekly_pacing`.
+
+## Stops and retries
+
+When a launched task changes state, fleetd decides what the stop means:
+
+- **Usage limit.** A task that reaches `REVIEW` with the seat's usage-limit
+  report ("You've hit your session limit", "usage limit reached", and the
+  like) among its session's newest agent messages is `paused`. Its session
+  keeps the seat. Once the seat's heartbeat shows the limit reset (the seat is
+  online again), fleetd sends the session `message.add` with a request to
+  continue where it stopped, in the same conversation. A paused task that a
+  person continues is no longer paused.
+- **Session failure.** A task that becomes `FAILED`, or reaches `REVIEW` with
+  its session `FAILED`, goes back to the dispatcher on the same seat, with the
+  same backoff and attempt budget as a failed launch (3 attempts). The new
+  session runs the task's current workflow step in the same task directory,
+  but starts a fresh conversation. After the last attempt the task stays
+  `exhausted` until a person acts.
+- A task that is `COMPLETED`, `CANCELLED`, or deleted is done: fleetd stops
+  its session.
 
 ## Custom workflows
 
@@ -157,7 +187,7 @@ Rules for a workflow that fleetd runs:
 ## Monitoring
 
 After each dispatch round fleetd reads the Kandev state of every launched task
-it has not yet seen end (`COMPLETED`, `CANCELLED`, `FAILED`, or deleted) and
+it has not yet seen end (`COMPLETED`, `CANCELLED`, or deleted) or fail, and
 records it with the time it ended. When a task ends fleetd sends
 `session.stop` for its session once: a session waiting for input keeps
 agentctl running and the seat full. The stopped session is `CANCELLED` and
@@ -166,7 +196,7 @@ stay. `/metrics` reports:
 
 | Metric | Labels | Meaning |
 | --- | --- | --- |
-| `fleet_tasks` | `seat`, `owner`, `outcome` | Tasks launched since the fleet database was created. `outcome` is `launching`, `running` (including a task in `REVIEW` that keeps its session), `released`, `launch_failed`, or the ended Kandev state in lower case (`completed`, `cancelled`, `failed`, `deleted`). |
+| `fleet_tasks` | `seat`, `owner`, `outcome` | Tasks launched since the fleet database was created. `outcome` is `launching`, `running` (including a task in `REVIEW` that keeps its session), `paused` (at a usage limit), `released`, `launch_failed`, `failed` (its session failed mid-run; it is retried), or the ended Kandev state in lower case (`completed`, `cancelled`, `deleted`). |
 | `fleet_task_info` | `task`, `seat`, `owner`, `state`, `outcome`, `attempt` | One series (value 1) per task running now or finished in the last 24 h; `state` is the last Kandev task state. |
 | `fleet_task_duration_seconds` | `task`, `seat`, `owner` | Launch to finish, or launch to now while running. |
 
@@ -190,6 +220,8 @@ VictoriaMetrics data source).
 | `POST /v1/admin/seats/{id}/rotate-secret` | admin | Issue a new HMAC secret (shown once); put it in the node's config. |
 | `GET /v1/admin/handoffs[?state=offered,...]` | admin | List handoff offers for tasks blocked by a seat's limit. |
 | `POST /v1/admin/handoffs/{id}/accept` | admin | Body `{"seat_id": "..."}`: the member owning that seat takes the task; fleetd reassigns it and starts a new session of the same task on their seat with a checkpoint prompt. On failure the original assignee is restored and the handoff is offered again. |
+| `GET /v1/admin/tasks/status` | admin | `{"workspace_id", "at", "tasks": {"<task id>": {"status", "reason", "seat_id", "reset_at", "attempt", "max_attempts", "retry_at", "last_error"}}}` as of the last round. `status` is `waiting` (with `reason`), `starting`, `running`, `review`, `paused`, `released`, `retrying`, or `exhausted`. The Kandev plugin shows it on task cards. |
+| `POST /v1/admin/tasks/{id}/assign-creator` | admin | Body `{"user_id": "..."}`: assign an unassigned task in the fleet workspace to that user. `result` is `assigned`, `already_assigned`, or `not_fleet_workspace`. |
 | `GET /metrics` | `Bearer $FLEET_METRICS_TOKEN` when set | Prometheus text: `fleet_seats{state}`, and per live seat `fleet_seat_info`, `_capacity`, `_free_slots`, `_quota_5h_percent`, `_quota_week_percent`, `_limit_reset_seconds`, `_heartbeat_age_seconds` (labels `seat`, `owner`); with the dispatcher, `fleet_queue_tasks{priority}`, `fleet_queue_waiting_tasks{priority,reason}`, `fleet_queue_exhausted_tasks`, `fleet_dispatch_launches_total`, `fleet_dispatch_failures_total`, `fleet_handoffs{state}`, `fleet_tasks{seat,owner,outcome}`, and for tasks running or finished in the last 24 h `fleet_task_info{task,seat,owner,state,outcome,attempt}` and `fleet_task_duration_seconds{task,seat,owner}`. See [Monitoring](#monitoring). |
 
 Issue a registration token for a seat owner:

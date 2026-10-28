@@ -1,7 +1,7 @@
 id: "kandev-fleet"
 api_version: 2
 min_kandev_version: "0.91.1"
-version: "0.2.1"
+version: "0.3.0"
 display_name: "Fleet"
 description: "Seats, usage limits, and handoffs for the fleetd seat pool"
 author: "vantamm27"
@@ -47,6 +47,14 @@ actions:
     access: "authenticated"
     max_body_bytes: 1024
   - key: "fleet.tasks"
+    scope: "workspace"
+    access: "authenticated"
+    max_body_bytes: 1024
+  - key: "fleet.task.status"
+    scope: "workspace"
+    access: "authenticated"
+    max_body_bytes: 1024
+  - key: "fleet.task.created"
     scope: "workspace"
     access: "authenticated"
     max_body_bytes: 1024

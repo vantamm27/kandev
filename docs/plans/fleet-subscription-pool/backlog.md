@@ -117,6 +117,27 @@ Findings from the Kandev code (not yet reproduced live):
 
 | W6 | core | Start a task's agent on its environment's executor when no executor is given. | todo | Kandev's auto-start for a task without a live session uses the task's metadata executor, which fleetd never sets, so it lands on the workspace default (Kandev's host, no subscription login) and leaves a failed "Authentication required" session behind; fleetd's stop does not change that session's `WAITING_FOR_INPUT` state, so it stays visible in the task. Falling back to the task environment's executor profile would keep the run on the seat. It bypasses fleetd's capacity and quota checks, so decide together with I1. |
 
+## Phase 3e: Stops, resume, and task status in the UI (2026-10-28)
+
+Goal: members create and follow fleet tasks without remembering rules, see in the Kandev UI why a task waits, and a task stopped by a usage limit or a failed session goes on by itself.
+
+Review findings (2026-10-28):
+
+- The task-creation rules lived only in the README; a task created without an assignee, outside an intake step, or with **Start task** was ignored with no sign in the UI.
+- Seats at a usage limit already took no new work, but the wait reason `seats_full` mixed busy seats with cooling ones and gave no reset time.
+- Nothing continued a task stopped mid-run: a session stopped by the usage limit sat in `REVIEW` after the reset, and a session that failed mid-run finished its claim.
+- Regression from W1: the limit scan skipped tasks in `REVIEW`, so a task stopped by the limit was never offered to another member.
+- Chatting with a running task, or a task in `REVIEW` that keeps its session, goes to its seat directly. A reply after fleetd freed the seat is expected to hit W6 (not verified).
+
+| ID | Kind | Item | Status | Notes |
+| --- | --- | --- | --- | --- |
+| R1 | agent | Offer handoffs for tasks stopped by the limit. | done | The limit scan offers launched tasks that are not done, tasks paused at the limit, and tasks whose session failed on the blocked seat; a task in `REVIEW` for a person is not offered. A handoff move now resets the claim's tracking (`MoveClaim`). |
+| R2 | agent | Continue a task paused at the usage limit; retry a session that failed mid-run. | done | On a change to `REVIEW`, the tracker reads the session's 5 newest messages (`GET /api/v1/task-sessions/{id}/messages?sort=desc`) and pauses the claim (migration 7: `paused_at`) when an agent message reports the limit. Once the seat is online again, `Resume` sends `message.add` asking the session to continue, and records the task as running from then. Paused sessions are never released. A task that becomes `FAILED`, or reaches `REVIEW` with its session `FAILED`, becomes a failed claim that keeps its seat and session (`FailRunningClaim`); the dispatcher retries it on that seat with the launch backoff and attempt budget. Outcomes gain `paused` and `failed`. The limit text match follows Kandev's `routingerr` rules; the real Claude message over ACP was not observed (see R6). |
+| R3 | agent | Per-task status and a separate cooldown reason. | done | `quota_cooldown` replaces `seats_full` for cooling seats. Each round records a status per task (`waiting` with reason, `starting`, `running`, `review`, `paused`, `released`, `retrying`, `exhausted`, with seat, reset time, attempts, retry time, last error); `GET /v1/admin/tasks/status` returns them with the fleet workspace ID. An unassigned task in an intake step now waits with `no_assignee` instead of being ignored. |
+| R4 | plugin | Show the status in Kandev and assign new tasks to their creator. | done | Plugin 0.3.0: a badge on kanban cards (`task-card-indicators`) and a sentence in the chat top bar (`chat-top-bar`), fed by one shared 30 s poll of `fleet.task.status`. In the fleet workspace's create dialog (`task-create-input-actions`) a hint says to use **Create task**, and `registerTaskCreatedHandler` calls `fleet.task.created`, which assigns the task to the verified actor through `POST /v1/admin/tasks/{id}/assign-creator` (only an unassigned task in the fleet workspace). |
+| R5 | agent | Take over tasks Kandev started on its host; relaunch a released task when a person replies. | paused | Paused by the user on 2026-10-28. |
+| R6 | ops | Live check with simulated limits only. | todo | Do not exhaust a real quota. Simulate the limit with the seat's quota file (probe disabled for the test) and an agent message that quotes the limit text; simulate a failure by stopping the agent process. |
+
 ## Ideas
 
 | ID | Kind | Item | Status | Notes |
@@ -180,3 +201,4 @@ Findings from the Kandev code (not yet reproduced live):
 - 2026-10-27: a member created a task in the UI with the fleet profile on the Local executor; it failed with "Authentication required" because Kandev's host has no subscription login, and the UI-prepared session also blocked dispatch (E4). fleetd now takes over sessions that never sent a prompt (stop, reset the task environment, launch on the seat) and accepts fleet-profile tasks in any step; unassigned ones wait with `no_assignee`. The Fleet page gained the queue, per-seat stats, recent tasks and admin seat controls.
 - 2026-10-27: Phase 3c planned (custom workflows) from the Kandev code: REVIEW follows every agent turn, so stopping sessions at REVIEW broke multi-step workflows. W1-W4 done (sessions kept through REVIEW and released only for a waiting task, released tasks continue on their seat, several intake steps, intake auto-start warning). W5 live run pending.
 - 2026-10-27: W5 live run done on the Linux seat (tasks A, B, C in workflow "Fleet custom W5"); three fixes from the run deployed (fleetd:9cc05859). W6 recorded for the stray host session Kandev leaves behind.
+- 2026-10-28: review of member-facing gaps (task-creation rules only in docs, no task status in the UI, no resume after a limit or failure, handoffs skipped tasks in REVIEW). Phase 3e: R1-R4 done, R5 paused by the user, R6 (simulated live check) next.

@@ -47,9 +47,10 @@ func Blocked(seat store.SeatSummary, now time.Time, threshold time.Duration) boo
 	}
 }
 
-// Scan offers a handoff for every launched task on a blocked seat that is not
-// done yet, and withdraws offers whose seat is usable again. It returns the
-// number of new offers.
+// Scan offers a handoff for every task on a blocked seat that still needs
+// it: launched and not done, paused at the limit, or failed mid-run and
+// waiting for a retry there. It withdraws offers whose seat is usable again.
+// It returns the number of new offers.
 func (d *Detector) Scan(ctx context.Context, now time.Time) (int, error) {
 	seats, err := d.store.ListSeats(ctx)
 	if err != nil {
@@ -65,7 +66,7 @@ func (d *Detector) Scan(ctx context.Context, now time.Time) (int, error) {
 	}
 	offered := 0
 	for _, c := range claims {
-		if c.State != store.ClaimLaunched {
+		if !holdsSeat(c) {
 			continue
 		}
 		seat, ok := byID[c.SeatID]
@@ -89,9 +90,23 @@ func (d *Detector) Scan(ctx context.Context, now time.Time) (int, error) {
 	return offered, nil
 }
 
+// holdsSeat reports whether a claim's task waits on its seat: launched and
+// not finished, or failed mid-run (its session ran there) with its
+// environment on that seat.
+func holdsSeat(c store.Claim) bool {
+	switch c.State {
+	case store.ClaimLaunched:
+		return c.FinishedAt == nil
+	case store.ClaimFailed:
+		return c.SessionID != ""
+	default:
+		return false
+	}
+}
+
 func (d *Detector) offer(ctx context.Context, c store.Claim, seat store.SeatSummary, now time.Time) (bool, error) {
 	task, err := d.tasks.GetTask(ctx, c.TaskID)
-	if kandev.IsNotFound(err) || (err == nil && kandev.TaskDone(task.State)) {
+	if kandev.IsNotFound(err) || (err == nil && !needsWork(task, c)) {
 		return false, nil
 	}
 	if err != nil {
@@ -112,4 +127,18 @@ func (d *Detector) offer(ctx context.Context, c store.Claim, seat store.SeatSumm
 	d.log.Info("handoff offered", "handoff_id", h.ID, "task_id", c.TaskID, "from_seat_id", seat.ID,
 		"owner_user_id", seat.OwnerUserID, "seat_state", seat.State, "attempt", h.Attempt)
 	return true, nil
+}
+
+// needsWork reports whether a blocked task has work left. A task in REVIEW
+// is done with its turn, unless it stopped at the usage limit or its session
+// failed.
+func needsWork(t kandev.Task, c store.Claim) bool {
+	switch {
+	case t.State == kandev.TaskStateCompleted || t.State == kandev.TaskStateCancelled:
+		return false
+	case c.PausedAt != nil || c.State == store.ClaimFailed:
+		return true
+	default:
+		return !kandev.TaskDone(t.State)
+	}
 }

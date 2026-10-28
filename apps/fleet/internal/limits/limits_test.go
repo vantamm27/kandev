@@ -121,3 +121,34 @@ func TestScanIgnoresDeletedTasks(t *testing.T) {
 		t.Fatalf("a deleted task gets no offer: %d, %v", n, err)
 	}
 }
+
+// A task stopped by the limit sits in REVIEW (paused) or FAILED; both still
+// need work and move to another member when the seat is blocked for long. A
+// task in REVIEW for a person, and a finished one, do not.
+func TestScanOffersTasksStoppedByTheLimit(t *testing.T) {
+	st, d := setup(t, fakeTasks{
+		"t-paused": {ID: "t-paused", State: "REVIEW"},
+		"t-failed": {ID: "t-failed", State: "FAILED"},
+		"t-review": {ID: "t-review", State: "REVIEW"},
+		"t-done":   {ID: "t-done", State: "COMPLETED"},
+	})
+	ctx := context.Background()
+	if _, err := st.PauseClaim(ctx, "t-paused", now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.FailRunningClaim(ctx, "t-failed", "FAILED", "the session stopped at the seat's usage limit", now); err != nil {
+		t.Fatal(err)
+	}
+	beat(t, st, store.SeatCooldownWeek, "week", 1)
+	if n, err := d.Scan(ctx, now); err != nil || n != 2 {
+		t.Fatalf("offers = %d, %v", n, err)
+	}
+	offered, _ := st.ListHandoffs(ctx, store.HandoffOffered)
+	got := map[string]bool{}
+	for _, h := range offered {
+		got[h.TaskID] = true
+	}
+	if !got["t-paused"] || !got["t-failed"] {
+		t.Fatalf("offered = %v; want the paused and the failed task", got)
+	}
+}

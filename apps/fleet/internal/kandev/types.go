@@ -93,10 +93,11 @@ type AgentProfile struct {
 
 // Kandev task states fleetd acts on, from pkg/api/v1/task.go.
 const (
-	TaskStateReview    = "REVIEW"
-	TaskStateCompleted = "COMPLETED"
-	TaskStateCancelled = "CANCELLED"
-	TaskStateFailed    = "FAILED"
+	TaskStateInProgress = "IN_PROGRESS"
+	TaskStateReview     = "REVIEW"
+	TaskStateCompleted  = "COMPLETED"
+	TaskStateCancelled  = "CANCELLED"
+	TaskStateFailed     = "FAILED"
 )
 
 // Kandev session states fleetd acts on: a session that ended in an error,
@@ -233,6 +234,17 @@ type TaskSession struct {
 	State      string `json:"state"`
 	ExecutorID string `json:"executor_id,omitempty"`
 }
+
+// SessionMessage is the subset of a task session message fleetd reads.
+type SessionMessage struct {
+	ID         string `json:"id"`
+	AuthorType string `json:"author_type"`
+	Type       string `json:"type,omitempty"`
+	Content    string `json:"content"`
+}
+
+// MessageAuthorUser is the author type of a person's message.
+const MessageAuthorUser = "user"
 
 // Live reports whether the session has a live agent.
 func (s TaskSession) Live() bool {

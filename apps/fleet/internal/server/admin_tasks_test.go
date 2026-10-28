@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/kandev/kandev/apps/fleet/internal/dispatch"
+	"github.com/kandev/kandev/apps/fleet/internal/kandev"
 	"github.com/kandev/kandev/apps/fleet/internal/store"
 )
 
@@ -93,5 +95,71 @@ func TestAdminListTasks(t *testing.T) {
 func TestAdminListTasksWithoutTracking(t *testing.T) {
 	if rec := adminRequest(t, &fakeAdmin{}, "tok", http.MethodGet, "/v1/admin/tasks", "Bearer tok"); rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 without task tracking", rec.Code)
+	}
+}
+
+func TestAdminTaskStatuses(t *testing.T) {
+	reset := tasksNow.Add(2 * time.Hour)
+	round := fixedRound{At: tasksNow, Tasks: map[string]dispatch.TaskStatus{
+		"t_paused": {Status: dispatch.StatusPaused, SeatID: "seat_a", ResetAt: &reset},
+	}}
+	srv := New(Deps{DB: fakePinger{}, Admin: &fakeAdmin{}, AdminToken: "tok", Rounds: round, WorkspaceID: "ws-1",
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/tasks/status", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		At          time.Time                      `json:"at"`
+		WorkspaceID string                         `json:"workspace_id"`
+		Tasks       map[string]dispatch.TaskStatus `json:"tasks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if p := got.Tasks["t_paused"]; !got.At.Equal(tasksNow) || got.WorkspaceID != "ws-1" || p.Status != "paused" || p.ResetAt == nil || !p.ResetAt.Equal(reset) {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if rec := adminRequest(t, &fakeAdmin{}, "tok", http.MethodGet, "/v1/admin/tasks/status", "Bearer tok"); rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 without the dispatcher", rec.Code)
+	}
+}
+
+type recordingAssigner struct {
+	taskID, userID string
+	err            error
+}
+
+func (r *recordingAssigner) AssignCreator(_ context.Context, taskID, userID string) (string, error) {
+	r.taskID, r.userID = taskID, userID
+	return dispatch.AssignDone, r.err
+}
+
+func TestAssignCreatorEndpoint(t *testing.T) {
+	assigner := &recordingAssigner{}
+	srv := New(Deps{DB: fakePinger{}, Admin: &fakeAdmin{}, AdminToken: "tok", Assigner: assigner,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	call := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/admin/tasks/t_1/assign-creator", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer tok")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec
+	}
+	if rec := call(`{"user_id":"user-a"}`); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"result":"assigned"`) {
+		t.Fatalf("assign = %d %s", rec.Code, rec.Body.String())
+	}
+	if assigner.taskID != "t_1" || assigner.userID != "user-a" {
+		t.Fatalf("assigner got %+v", assigner)
+	}
+	if rec := call(`{"user_id":" "}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("blank user = %d", rec.Code)
+	}
+	assigner.err = &kandev.APIError{Status: 404, Message: "task not found"}
+	if rec := call(`{"user_id":"user-a"}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing task = %d", rec.Code)
 	}
 }

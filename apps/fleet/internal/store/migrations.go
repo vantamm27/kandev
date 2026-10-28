@@ -87,4 +87,7 @@ var migrations = []string{
 	`
 	ALTER TABLE dispatch_claims ADD COLUMN released_step_id TEXT NOT NULL DEFAULT '';
 	`,
+	`
+	ALTER TABLE dispatch_claims ADD COLUMN paused_at TIMESTAMP;
+	`,
 }

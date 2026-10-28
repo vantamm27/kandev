@@ -192,6 +192,8 @@ func startDispatcher(ctx context.Context, cfg config.Config, db *store.Store, cl
 	d.Tracker = tracker
 	deps.Dispatch = d
 	deps.Rounds = d
+	deps.Assigner = dispatch.Assigner{WorkspaceID: cfg.WorkspaceID, Tasks: client}
+	deps.WorkspaceID = cfg.WorkspaceID
 	deps.Handoffs = handoff.New(db, client, launcher, log)
 	deps.HandoffCounts = db
 	go func() {

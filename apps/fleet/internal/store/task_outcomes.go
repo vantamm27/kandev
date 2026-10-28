@@ -13,16 +13,21 @@ type TaskOutcome struct {
 	OwnerUserID string
 }
 
-// Outcome classifies the task: launching, running, launch_failed, released,
-// or the finished Kandev state in lower case.
+// Outcome classifies the task: launching, running, paused (at its seat's
+// usage limit), launch_failed, failed (its session failed mid-run and fleetd
+// retries it), released, or the finished Kandev state in lower case.
 func (t TaskOutcome) Outcome() string {
 	switch {
+	case t.State == ClaimFailed && t.SessionID != "":
+		return "failed"
 	case t.State == ClaimFailed:
 		return "launch_failed"
 	case t.State == ClaimLaunching:
 		return "launching"
 	case t.State == ClaimReleased:
 		return "released"
+	case t.FinishedAt == nil && t.PausedAt != nil:
+		return "paused"
 	case t.FinishedAt == nil:
 		return "running"
 	default:
@@ -30,14 +35,15 @@ func (t TaskOutcome) Outcome() string {
 	}
 }
 
-// End is when the task stopped running: the claim time for a failed launch,
-// the finish time for a finished task, and nothing while it runs.
+// End is when the task stopped running: the finish time for a finished task
+// or a session that failed mid-run, the claim time for a failed launch, and
+// nothing while it runs.
 func (t TaskOutcome) End() (time.Time, bool) {
 	switch {
-	case t.State == ClaimFailed:
-		return t.ClaimedAt, true
 	case t.FinishedAt != nil:
 		return *t.FinishedAt, true
+	case t.State == ClaimFailed:
+		return t.ClaimedAt, true
 	default:
 		return time.Time{}, false
 	}
@@ -46,7 +52,7 @@ func (t TaskOutcome) End() (time.Time, bool) {
 // Duration is how long the task ran: from launch to finish, or to now while
 // it runs. A failed launch never ran.
 func (t TaskOutcome) Duration(now time.Time) (time.Duration, bool) {
-	if t.State == ClaimFailed {
+	if t.State == ClaimFailed && t.FinishedAt == nil {
 		return 0, false
 	}
 	end, ok := t.End()

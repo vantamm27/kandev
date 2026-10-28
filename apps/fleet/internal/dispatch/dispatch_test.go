@@ -24,6 +24,16 @@ type fakeTasks struct {
 	steps     map[string]bool
 	stepReads int
 	sessions  map[string][]kandev.TaskSession
+	// messages maps a session ID to its messages, newest first.
+	messages map[string][]kandev.SessionMessage
+}
+
+func (f *fakeTasks) ListRecentMessages(_ context.Context, sessionID string, limit int) ([]kandev.SessionMessage, error) {
+	msgs := f.messages[sessionID]
+	if len(msgs) > limit {
+		msgs = msgs[:limit]
+	}
+	return msgs, nil
 }
 
 func (f *fakeTasks) ListTaskSessions(_ context.Context, taskID string) ([]kandev.TaskSession, error) {
@@ -69,6 +79,14 @@ type fakeLauncher struct {
 	err     error
 	primary []string
 	stopped []string
+	sent    []string
+}
+
+func (f *fakeLauncher) AddMessage(_ context.Context, taskID, sessionID, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sent = append(f.sent, taskID+"/"+sessionID)
+	return nil
 }
 
 func (f *fakeLauncher) StopSession(_ context.Context, sessionID, _ string) error {
@@ -162,8 +180,14 @@ func TestRoundLaunchesEligibleTasksOnOwnerSeat(t *testing.T) {
 		t.Fatalf("claim = %+v", claims["t-a"])
 	}
 	stats := d.LastRound()
-	if stats.Launched != 2 || stats.Queued["high"] != 1 || stats.Queued["medium"] != 1 {
-		t.Fatalf("stats = %+v", stats)
+	if stats.Launched != 2 || stats.Queued["high"] != 1 || stats.Queued["medium"] != 2 || stats.Waiting["medium"]["no_assignee"] != 1 {
+		t.Fatalf("stats = %+v; an unassigned intake task waits with no_assignee", stats)
+	}
+	if st := stats.Tasks["t-unassigned"]; st.Status != StatusWaiting || st.Reason != "no_assignee" {
+		t.Fatalf("t-unassigned status = %+v", st)
+	}
+	if st := stats.Tasks["t-a"]; st.Status != StatusRunning || st.SeatID != "a1" {
+		t.Fatalf("t-a status = %+v", st)
 	}
 
 	if err := d.Round(context.Background()); err != nil {

@@ -38,25 +38,29 @@ type Claim struct {
 	// ReleasedStepID is the workflow step a released task was in when fleetd
 	// freed its seat; empty for claims released before it was recorded.
 	ReleasedStepID string
-	ClaimedAt      time.Time
-	UpdatedAt      time.Time
+	// PausedAt is when fleetd saw the task's session stop at its seat's
+	// usage limit; the session waits there for the limit to reset.
+	PausedAt  *time.Time
+	ClaimedAt time.Time
+	UpdatedAt time.Time
 }
 
 const claimColumns = `c.task_id, c.seat_id, c.attempt, c.state, c.session_id, c.last_error, c.task_state, c.task_state_at,
-	c.finished_at, c.released_step_id, c.claimed_at, c.updated_at`
+	c.finished_at, c.released_step_id, c.paused_at, c.claimed_at, c.updated_at`
 
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanClaim(row rowScanner, extra ...any) (Claim, error) {
 	var c Claim
-	var stateAt, finished sql.NullTime
+	var stateAt, finished, paused sql.NullTime
 	dest := append([]any{&c.TaskID, &c.SeatID, &c.Attempt, &c.State, &c.SessionID, &c.LastError, &c.TaskState, &stateAt,
-		&finished, &c.ReleasedStepID, &c.ClaimedAt, &c.UpdatedAt}, extra...)
+		&finished, &c.ReleasedStepID, &paused, &c.ClaimedAt, &c.UpdatedAt}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return Claim{}, fmt.Errorf("scan claim: %w", err)
 	}
 	c.TaskStateAt = nullTime(stateAt)
 	c.FinishedAt = nullTime(finished)
+	c.PausedAt = nullTime(paused)
 	return c, nil
 }
 
@@ -95,7 +99,7 @@ func (s *Store) BeginClaim(ctx context.Context, taskID, seatID string, now time.
 		ON CONFLICT(task_id) DO UPDATE SET seat_id = excluded.seat_id,
 			attempt = CASE WHEN dispatch_claims.state = ? THEN 1 ELSE dispatch_claims.attempt + 1 END,
 			state = excluded.state, session_id = '', last_error = '', task_state = '', task_state_at = NULL,
-			finished_at = NULL, released_step_id = '', claimed_at = excluded.claimed_at,
+			finished_at = NULL, released_step_id = '', paused_at = NULL, claimed_at = excluded.claimed_at,
 			updated_at = excluded.updated_at
 		WHERE dispatch_claims.state IN (?, ?)`,
 		taskID, seatID, ClaimLaunching, now.UTC(), now.UTC(), ClaimReleased, ClaimFailed, ClaimReleased)
@@ -167,9 +171,11 @@ func truncate(s string, n int) string {
 	return s[:n]
 }
 
-// MoveClaim points a launched task's claim at the seat it now runs on.
+// MoveClaim points a task's claim at the seat and session it now runs on,
+// as a launched claim tracked afresh.
 func (s *Store) MoveClaim(ctx context.Context, taskID, seatID, sessionID string, now time.Time) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET seat_id = ?, session_id = ?, state = ?, updated_at = ?
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET seat_id = ?, session_id = ?, state = ?, last_error = '',
+			task_state = '', task_state_at = NULL, finished_at = NULL, paused_at = NULL, updated_at = ?
 		WHERE task_id = ?`, seatID, sessionID, ClaimLaunched, now.UTC(), taskID)
 	if err != nil {
 		return fmt.Errorf("move claim: %w", err)
@@ -200,13 +206,71 @@ func (s *Store) ReleaseClaim(ctx context.Context, taskID, stepID string, now tim
 // own, as if fleetd had launched it on the claim's seat.
 func (s *Store) AdoptSession(ctx context.Context, taskID, sessionID string, now time.Time) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, session_id = ?, task_state = '',
-		task_state_at = NULL, finished_at = NULL, nudged_at = NULL, released_step_id = '', updated_at = ?
+		task_state_at = NULL, finished_at = NULL, nudged_at = NULL, released_step_id = '', paused_at = NULL, updated_at = ?
 		WHERE task_id = ? AND state = ?`, ClaimLaunched, sessionID, now.UTC(), taskID, ClaimReleased)
 	if err != nil {
 		return fmt.Errorf("adopt session: %w", err)
 	}
 	if n, err := res.RowsAffected(); err != nil || n != 1 {
 		return fmt.Errorf("adopt session for %s: no released claim", taskID)
+	}
+	return nil
+}
+
+// FailRunningClaim marks an unfinished launched claim failed after its
+// session failed mid-run, with the task state fleetd saw. It keeps the claim's
+// seat and session, so the dispatcher retries the task on the seat that holds
+// its environment, and starts the retry backoff now.
+func (s *Store) FailRunningClaim(ctx context.Context, taskID, taskState, lastError string, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET state = ?, last_error = ?, finished_at = ?, paused_at = NULL,
+			task_state_at = CASE WHEN task_state = ? THEN task_state_at ELSE ? END, task_state = ?, updated_at = ?
+		WHERE task_id = ? AND state = ? AND finished_at IS NULL`,
+		ClaimFailed, truncate(lastError, 1000), now.UTC(), taskState, now.UTC(), taskState, now.UTC(), taskID, ClaimLaunched)
+	if err != nil {
+		return false, fmt.Errorf("fail running claim: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("fail running claim: %w", err)
+	}
+	return n == 1, nil
+}
+
+// PauseClaim records that an unfinished launched task stopped at its seat's
+// usage limit. It reports whether the claim was not paused already.
+func (s *Store) PauseClaim(ctx context.Context, taskID string, now time.Time) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET paused_at = ?
+		WHERE task_id = ? AND state = ? AND finished_at IS NULL AND paused_at IS NULL`, now.UTC(), taskID, ClaimLaunched)
+	if err != nil {
+		return false, fmt.Errorf("pause claim: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("pause claim: %w", err)
+	}
+	return n == 1, nil
+}
+
+// UnpauseClaim forgets a pause, used when the task went on without fleetd.
+func (s *Store) UnpauseClaim(ctx context.Context, taskID string) error {
+	if _, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET paused_at = NULL WHERE task_id = ?`, taskID); err != nil {
+		return fmt.Errorf("unpause claim: %w", err)
+	}
+	return nil
+}
+
+// ResumeClaim clears a pause after fleetd asked the session to continue and
+// records the task as running from now, so the next REVIEW the tracker sees
+// is the resumed turn's.
+func (s *Store) ResumeClaim(ctx context.Context, taskID, runningState string, now time.Time) error {
+	res, err := s.db.ExecContext(ctx, `UPDATE dispatch_claims SET paused_at = NULL, task_state = ?, task_state_at = ?
+		WHERE task_id = ? AND state = ? AND finished_at IS NULL AND paused_at IS NOT NULL`,
+		runningState, now.UTC(), taskID, ClaimLaunched)
+	if err != nil {
+		return fmt.Errorf("resume claim: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n != 1 {
+		return fmt.Errorf("resume claim %s: no paused claim", taskID)
 	}
 	return nil
 }

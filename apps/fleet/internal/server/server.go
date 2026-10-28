@@ -50,7 +50,11 @@ type Deps struct {
 	TaskOutcomes TaskOutcomeLister
 	// Rounds adds the queue to the admin task list.
 	Rounds RoundReader
-	Log    *slog.Logger
+	// Assigner gives new fleet tasks to their creators; nil disables it.
+	Assigner TaskOwnerAssigner
+	// WorkspaceID is the Kandev workspace the dispatcher serves.
+	WorkspaceID string
+	Log         *slog.Logger
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
 }

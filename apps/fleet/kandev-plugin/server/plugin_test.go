@@ -19,6 +19,8 @@ type fakeFleetd struct {
 	gotSeat   string
 	gotAuth   string
 	gotSeatOp string
+	// gotAssign is "<path> <user_id>" of the last assign-creator call.
+	gotAssign string
 }
 
 func (f *fakeFleetd) server(t *testing.T) *httptest.Server {
@@ -44,6 +46,13 @@ func (f *fakeFleetd) server(t *testing.T) *httptest.Server {
 				return
 			}
 			_, _ = io.WriteString(w, `{"id":"hoff_1","task_id":"task-1","to_seat_id":"`+f.gotSeat+`","state":"done"}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/tasks/status":
+			_, _ = io.WriteString(w, `{"workspace_id":"ws-1","tasks":{"task-1":{"status":"paused","seat_id":"seat_b1","reset_at":"2026-10-28T14:20:00Z"}}}`)
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/assign-creator"):
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			f.gotAssign = r.URL.Path + " " + body["user_id"]
+			_, _ = io.WriteString(w, `{"task_id":"task-1","result":"assigned"}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/tasks":
 			_, _ = io.WriteString(w, `{"queue":{"queued":{"low":1},"waiting":[]},"recent":[],"by_seat":[]}`)
 		case r.Method == http.MethodPost && strings.HasPrefix(r.URL.Path, "/v1/admin/seats/"):
@@ -177,5 +186,33 @@ func TestManageSeat(t *testing.T) {
 	f.seatErr = http.StatusConflict
 	if status, out := act(t, p, actionManageSeat, "admin-1", `{"seatId":"seat_b1","op":"retire"}`); status != http.StatusConflict || out["error"] != "seat is busy" {
 		t.Fatalf("busy retire = %d %+v", status, out)
+	}
+}
+
+func TestTaskStatusPassesFleetdThrough(t *testing.T) {
+	srv := (&fakeFleetd{}).server(t)
+	status, out := act(t, newPlugin(srv.URL), actionTaskStatus, "user-b", `{}`)
+	task, _ := out["tasks"].(map[string]any)["task-1"].(map[string]any)
+	if status != http.StatusOK || out["workspace_id"] != "ws-1" || task["status"] != "paused" {
+		t.Fatalf("status = %d %+v", status, out)
+	}
+}
+
+func TestTaskCreatedAssignsTheActor(t *testing.T) {
+	f := &fakeFleetd{}
+	p := newPlugin(f.server(t).URL)
+	if status, out := act(t, p, actionTaskCreated, "user-b", `{"taskId":"task-1"}`); status != http.StatusOK || out["result"] != "assigned" {
+		t.Fatalf("created = %d %+v", status, out)
+	}
+	if f.gotAssign != "/v1/admin/tasks/task-1/assign-creator user-b" {
+		t.Fatalf("fleetd got %q; the assignee must be the verified actor", f.gotAssign)
+	}
+	for _, body := range []string{`{}`, `{"taskId":"../seats"}`, `nope`} {
+		if status, _ := act(t, p, actionTaskCreated, "user-b", body); status != http.StatusBadRequest {
+			t.Fatalf("%s = %d, want 400", body, status)
+		}
+	}
+	if status, _ := act(t, p, actionTaskCreated, "", `{"taskId":"task-1"}`); status != http.StatusUnauthorized {
+		t.Fatalf("anonymous = %d, want 401", status)
 	}
 }
