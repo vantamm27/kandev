@@ -142,7 +142,7 @@ func newFixture(t *testing.T, seats ...store.Seat) (*store.Store, *fakeTasks, *f
 
 func seatFor(id, owner string, capacity int) store.Seat {
 	return store.Seat{ID: id, OwnerUserID: owner, SSHHost: "mini-" + id, SSHPort: 22, SSHUser: "seat", HostKeyFingerprint: "SHA256:x",
-		Capacity: capacity, KandevExecutorProfileID: "prof-" + id, HMACSecret: "s", State: store.SeatOnline}
+		Capacity: capacity, KandevExecutorID: "exec-" + id, KandevExecutorProfileID: "prof-" + id, HMACSecret: "s", State: store.SeatOnline}
 }
 
 func intake(id, owner, priority string) kandev.Task {

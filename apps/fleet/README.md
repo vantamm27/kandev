@@ -164,7 +164,16 @@ by itself (`on_turn_complete`) after passing `REVIEW`.
 
 A released task needs its seat again when it leaves `REVIEW`, or when it moves
 to another step with `auto_start_agent`. If Kandev started a live session for
-it, fleetd adopts that session. Otherwise fleetd launches a new session on the
+it on the seat's executor, fleetd adopts that session, also while the task
+stays in `REVIEW`.
+
+**Resume.** The stopped session shows Kandev's **Resume** and **Start fresh
+session** buttons. Both start the same session on the executor it ran on, the
+seat, so Resume continues the same conversation there; a message to the
+stopped session is refused until then. They run even when the seat is busy or
+at its usage limit, since Kandev does not ask fleetd. fleetd adopts the
+revived session and can free the seat again later. A new session from the
+task's **+** tab uses the executor chosen in its dialog, not the seat. Otherwise fleetd launches a new session on the
 seat the task was released from, with the step's prompt. For a move into an
 `auto_start_agent` step, Kandev first starts the agent on its own host, which
 fails with "Authentication required" and builds the task environment there;

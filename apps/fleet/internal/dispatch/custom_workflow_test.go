@@ -169,6 +169,7 @@ func TestReleasedTaskAdoptsASessionKandevStarted(t *testing.T) {
 	st, tasks, launcher, d, _ := releasedFixture(t)
 	running := withSession(inState(intake("t-plan", "user-a", "high"), "IN_PROGRESS"), "sess-kandev", "RUNNING")
 	tasks.tasks = []kandev.Task{running}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {{ID: "sess-kandev", State: "RUNNING", ExecutorID: "exec-a1"}}}
 	if err := d.Round(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -247,5 +248,44 @@ func TestFailedRelaunchIsRetried(t *testing.T) {
 	}
 	if len(launcher.calls) != 2 {
 		t.Fatalf("calls = %d; the failed relaunch must be retried", len(launcher.calls))
+	}
+}
+
+// A person pressed Resume on the session fleetd stopped: Kandev revives it on
+// the seat and the task stays in REVIEW. fleetd tracks it again, so it can
+// free the seat later.
+func TestReleasedTaskResumedInReviewIsTrackedAgain(t *testing.T) {
+	st, tasks, launcher, d, _ := releasedFixture(t)
+	resumed := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-plan", "WAITING_FOR_INPUT")
+	tasks.tasks = []kandev.Task{resumed}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {{ID: "sess-plan", State: "WAITING_FOR_INPUT", ExecutorID: "exec-a1"}}}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	claims, _ := st.ListClaims(context.Background())
+	if c := claims["t-plan"]; c.State != store.ClaimLaunched || c.SessionID != "sess-plan" || c.FinishedAt != nil {
+		t.Fatalf("claim = %+v; want the resumed session tracked", c)
+	}
+	if len(launcher.calls) != 0 {
+		t.Fatalf("calls = %+v", launcher.calls)
+	}
+}
+
+// A live primary session on another executor (Kandev's host) is not the
+// seat's: fleetd does not adopt it.
+func TestReleasedTaskWithALiveSessionElsewhereIsNotAdopted(t *testing.T) {
+	st, tasks, _, d, _ := releasedFixture(t)
+	host := withSession(inState(intake("t-plan", "user-a", "high"), "REVIEW"), "sess-host", "WAITING_FOR_INPUT")
+	tasks.tasks = []kandev.Task{host}
+	tasks.sessions = map[string][]kandev.TaskSession{"t-plan": {
+		{ID: "sess-plan", State: "CANCELLED", ExecutorID: "exec-a1"},
+		{ID: "sess-host", State: "WAITING_FOR_INPUT", ExecutorID: "exec-local"},
+	}}
+	if err := d.Round(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	claims, _ := st.ListClaims(context.Background())
+	if c := claims["t-plan"]; c.State != store.ClaimReleased {
+		t.Fatalf("claim = %+v; a session off the seat must not be adopted", c)
 	}
 }

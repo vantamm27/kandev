@@ -83,7 +83,14 @@
           long: "Stopped at the seat's usage limit. Fleet continues it automatically" + (reset ? " after the reset at " + reset : " when the limit resets") + ".",
         };
       case "released":
-        return { tone: "idle", short: "Fleet: seat freed", long: "The seat was freed for another task. Fleet runs this task again when its workflow moves it to an agent step." };
+        return {
+          tone: "idle",
+          short: "Fleet: seat freed",
+          long:
+            "The seat was freed for another task. Press Resume to continue this conversation on seat " +
+            st.seat_id +
+            " (it runs there now, even if the seat is busy); fleet also runs the task again when its workflow moves it to an agent step.",
+        };
       case "retrying":
         return {
           tone: "warn",

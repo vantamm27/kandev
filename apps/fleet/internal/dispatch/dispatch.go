@@ -392,22 +392,52 @@ func (d *Dispatcher) workflowWentOn(ctx context.Context, t kandev.Task, c store.
 }
 
 // adoptKandevSessions tracks the live sessions Kandev started on its own for
-// released tasks that went on (a person replied, or a workflow step started
-// the agent), so fleetd does not launch them again and can free their seats
-// later. Tracking starts with the next round's claims.
+// released tasks: a person pressed Resume on the stopped session (the task
+// stays in REVIEW), or the workflow went on. fleetd adopts a session only on
+// the executor of the seat it released the task from, so it does not launch
+// the task again and can free that seat later; a session Kandev started on
+// another executor is left to the relaunch path. Tracking starts with the
+// next round's claims.
 func (d *Dispatcher) adoptKandevSessions(ctx context.Context, claims map[string]store.Claim, listed map[string]kandev.Task, now time.Time) error {
 	for id, c := range claims {
 		t, ok := listed[id]
-		if c.State != store.ClaimReleased || !ok || kandev.TaskDone(t.State) || !t.PrimarySessionLive() {
+		if c.State != store.ClaimReleased || !ok || !t.PrimarySessionLive() {
+			continue
+		}
+		onSeat, err := d.primaryOnSeat(ctx, t, c.SeatID)
+		if err != nil {
+			d.log.Warn("cannot tell where a released task's live session runs", "task_id", id, "error", err)
+			continue
+		}
+		if !onSeat {
 			continue
 		}
 		if err := d.store.AdoptSession(ctx, id, *t.PrimarySessionID, now); err != nil {
 			return err
 		}
 		d.log.Info("tracking a session Kandev started for a released task", "task_id", id, "seat_id", c.SeatID,
-			"session_id", *t.PrimarySessionID)
+			"session_id", *t.PrimarySessionID, "task_state", t.State)
 	}
 	return nil
+}
+
+// primaryOnSeat reports whether the task's primary session runs on the
+// seat's Kandev executor.
+func (d *Dispatcher) primaryOnSeat(ctx context.Context, t kandev.Task, seatID string) (bool, error) {
+	seat, err := d.store.GetSeat(ctx, seatID)
+	if err != nil {
+		return false, err
+	}
+	sessions, err := d.tasks.ListTaskSessions(ctx, t.ID)
+	if err != nil {
+		return false, err
+	}
+	for _, s := range sessions {
+		if s.ID == *t.PrimarySessionID {
+			return s.ExecutorID == seat.KandevExecutorID, nil
+		}
+	}
+	return false, nil
 }
 
 // seatDemand counts, per owner, the queued tasks waiting because the owner's
